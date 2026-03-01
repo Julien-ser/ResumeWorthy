@@ -107,7 +107,7 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
 
       // Set font
       doc.setFontSize(11);
-      doc.setFont(undefined, "normal");
+      doc.setFont("helvetica", "normal");
 
       // Split content into lines
       const lines = content.split("\n");
@@ -122,23 +122,23 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
         // Handle headings (lines starting with #)
         if (line.startsWith("### ")) {
           doc.setFontSize(12);
-          doc.setFont(undefined, "bold");
+          doc.setFont("helvetica", "bold");
           doc.text(line.replace(/^### /, ""), margin, yPosition);
-          doc.setFont(undefined, "normal");
+          doc.setFont("helvetica", "normal");
           doc.setFontSize(11);
           yPosition += lineHeight + 2;
         } else if (line.startsWith("## ")) {
           doc.setFontSize(14);
-          doc.setFont(undefined, "bold");
+          doc.setFont("helvetica", "bold");
           doc.text(line.replace(/^## /, ""), margin, yPosition);
-          doc.setFont(undefined, "normal");
+          doc.setFont("helvetica", "normal");
           doc.setFontSize(11);
           yPosition += lineHeight + 3;
         } else if (line.startsWith("# ")) {
           doc.setFontSize(16);
-          doc.setFont(undefined, "bold");
+          doc.setFont("helvetica", "bold");
           doc.text(line.replace(/^# /, ""), margin, yPosition);
-          doc.setFont(undefined, "normal");
+          doc.setFont("helvetica", "normal");
           doc.setFontSize(11);
           yPosition += lineHeight + 4;
         } else if (line.startsWith("- ")) {
