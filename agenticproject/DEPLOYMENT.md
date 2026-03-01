@@ -22,7 +22,7 @@ Vercel is optimized for Next.js and offers a generous free tier.
    - Click "New Project"
    - Import your GitHub repository
    - Select the `agenticproject/frontend` directory as root
-   - Add environment variable: `NEXT_PUBLIC_API_URL=https://your-backend-url.com`
+   - Add environment variable: `NEXT_PUBLIC_API_URL=https://resumeworthy.onrender.com`
    - Click "Deploy"
 
 3. **Your frontend is live** at `your-project.vercel.app`
@@ -46,13 +46,13 @@ Render offers a free tier for Python web services (with 15-min auto-sleep).
 
 3. **Add Environment Variables**
    - `OPENROUTER_API_KEY`: Your OpenRouter API key
-   - `PYTHONUNBUFFERED`: `1`
+   - `https://resumeworthy.onrender.com`: `1`
 
 4. **Deploy** - Click "Create Web Service"
 
-5. **Update Vercel env var** to point to your Render backend URL
+5. **Update Vercel env var** with your Render URL: `https://resumeworthy.onrender.com`
 
-6. **Your backend is live** at `https://your-service-name.onrender.com`
+6. **Your backend is live** at `https://resumeworthy.onrender.com`
 
 ---
 

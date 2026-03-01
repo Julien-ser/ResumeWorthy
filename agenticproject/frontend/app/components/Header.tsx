@@ -1,5 +1,4 @@
 import Image from "next/image";
-import logo from "../logo.png";
 
 export default function Header() {
   return (
@@ -8,7 +7,7 @@ export default function Header() {
         <div className="flex items-center gap-4">
           {/* RW Logo */}
           <div className="flex-shrink-0">
-            <Image src={logo} alt="ResumeWorthy Logo" width={56} height={56} className="w-14 h-14" />
+            <Image src="/logo.png" alt="ResumeWorthy Logo" width={56} height={56} className="w-14 h-14" />
           </div>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">ResumeWorthy</h1>
