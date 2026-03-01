@@ -8,6 +8,7 @@ interface Job {
   location: string;
   link: string;
   salary?: string;
+  description?: string;
 }
 
 interface JobSearchProps {
