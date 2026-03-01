@@ -56,35 +56,9 @@ Render offers a free tier for Python web services (with 15-min auto-sleep).
 
 ---
 
-## Option 2: Railway (All-in-One, Free)
+## Option 2: Fly.io (All-in-One)
 
-Railway offers free credits monthly (~$5 worth) for both frontend and backend.
-
-**Steps:**
-
-1. **Create Railway account** at [railway.app](https://railway.app)
-
-2. **Link GitHub**
-   - Create new project from GitHub
-
-3. **Deploy Frontend**
-   - Select `agenticproject/frontend` directory
-   - Build: `npm run build`
-   - Start: `npm start`
-
-4. **Deploy Backend**
-   - Select `agenticproject` directory  
-   - Build: `pip install -r requirements.txt`
-   - Start: `uvicorn api:app --host 0.0.0.0 --port $PORT`
-   - Add env vars (OPENROUTER_API_KEY)
-
-5. **Railway provides public URLs automacally**
-
----
-
-## Option 3: Fly.io (All-in-One, Free)
-
-Fly.io offers 3 shared-cpu VMs up to 3GB RAM for free.
+Fly.io offers 3 shared-cpu VMs up to 3GB RAM for free with no cold-start delays. Note: Requires adding a payment method to activate free tier.
 
 ### Frontend on Fly.io
 
@@ -92,7 +66,7 @@ Fly.io offers 3 shared-cpu VMs up to 3GB RAM for free.
    ```bash
    # macOS
    brew install flyctl
-   # Windows: download from https://fly.io/docs/getting-started/installing-flyctl/
+   # Windows: iwr https://fly.io/install.ps1 -useb | iex
    ```
 
 2. **In frontend directory:**
@@ -167,6 +141,32 @@ Fly.io offers 3 shared-cpu VMs up to 3GB RAM for free.
 
 ---
 
+## Option 3: Railway (All-in-One, Free)
+
+Railway offers free credits monthly (~$5 worth) for both frontend and backend.
+
+**Steps:**
+
+1. **Create Railway account** at [railway.app](https://railway.app)
+
+2. **Link GitHub**
+   - Create new project from GitHub
+
+3. **Deploy Frontend**
+   - Select `agenticproject/frontend` directory
+   - Build: `npm run build`
+   - Start: `npm start`
+
+4. **Deploy Backend**
+   - Select `agenticproject` directory  
+   - Build: `pip install -r requirements.txt`
+   - Start: `uvicorn api:app --host 0.0.0.0 --port $PORT`
+   - Add env vars (OPENROUTER_API_KEY)
+
+5. **Railway provides public URLs automacally**
+
+---
+
 ## Requirements File
 
 Create `agenticproject/requirements.txt`:
@@ -208,10 +208,10 @@ Once deployed:
 ## Important Notes
 
 - **Free tier limitations:**
-  - Render: Services sleep after 15 mins of inactivity (cold starts)
-  - Railway: Free credits limit (~$5/month)
-  - Fly.io: 3 shared VMs, 15GB disk space
   - Vercel: Up to 100GB bandwidth/month
+  - Render: Services sleep after 15 mins of inactivity (cold starts)
+  - Fly.io: 3 shared VMs, 15GB disk space (no cold starts, requires payment method)
+  - Railway: Free credits limit (~$5/month)
 
 - **Environment variables:**
   - Always set `OPENROUTER_API_KEY` in production
