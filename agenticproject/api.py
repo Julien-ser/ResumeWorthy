@@ -150,17 +150,30 @@ def extract_links_from_pdf(file_bytes: bytes) -> list:
             annots = page.get("/Annots")
             if not annots:
                 continue
+            # Resolve the annotations array itself if it's an indirect reference
+            if hasattr(annots, "get_object"):
+                annots = annots.get_object()
             for annot_ref in annots:
                 try:
-                    obj = annot_ref.get_object()
-                    if obj.get("/Subtype") == "/Link":
-                        action = obj.get("/A")
-                        if action and action.get("/S") == "/URI":
-                            uri = action.get("/URI", "")
-                            if isinstance(uri, bytes):
-                                uri = uri.decode("utf-8", errors="ignore")
-                            if uri:
-                                links.append(str(uri))
+                    obj = annot_ref.get_object() if hasattr(annot_ref, "get_object") else annot_ref
+                    if obj.get("/Subtype") != "/Link":
+                        continue
+                    action = obj.get("/A")
+                    if action is None:
+                        continue
+                    # Resolve the action dict if stored as an indirect reference (common in Word/Acrobat PDFs)
+                    if hasattr(action, "get_object"):
+                        action = action.get_object()
+                    if not action:
+                        continue
+                    if action.get("/S") != "/URI":
+                        continue
+                    uri = action.get("/URI", "")
+                    if isinstance(uri, bytes):
+                        uri = uri.decode("utf-8", errors="ignore")
+                    uri = str(uri).strip()
+                    if uri:
+                        links.append(uri)
                 except Exception:
                     continue
     except Exception:
@@ -476,10 +489,13 @@ async def tailor_resume(request: ResumeTailorRequest):
             f"Make it concise, impactful, and specific to this role."
         )
         
-        resume_response = llm.invoke([HumanMessage(content=resume_prompt)])
+        try:
+            resume_response = llm.invoke([HumanMessage(content=resume_prompt)])
+        except Exception as llm_err:
+            raise HTTPException(status_code=502, detail=f"LLM API error: {llm_err}")
         tailored_resume = resume_response.content if hasattr(resume_response, 'content') else str(resume_response)
         tailored_resume = clean_dashes(tailored_resume)
-        
+
         # Generate cover letter with rich context
         letter_prompt = (
             f"Write a compelling cover letter (150-200 words) for this position.\n\n"
@@ -494,16 +510,21 @@ async def tailor_resume(request: ResumeTailorRequest):
             f"5. Professional tone, ready to copy/paste\n\n"
             f"Make it personal and specific to this opportunity."
         )
-        
-        letter_response = llm.invoke([HumanMessage(content=letter_prompt)])
+
+        try:
+            letter_response = llm.invoke([HumanMessage(content=letter_prompt)])
+        except Exception as llm_err:
+            raise HTTPException(status_code=502, detail=f"LLM API error (cover letter): {llm_err}")
         cover_letter = letter_response.content if hasattr(letter_response, 'content') else str(letter_response)
         cover_letter = clean_dashes(cover_letter)
-        
+
         return ResumeTailorResponse(
             tailored_resume=tailored_resume,
             cover_letter=cover_letter
         )
-    
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
