@@ -141,6 +141,33 @@ def extract_urls_from_resume(text: str) -> dict:
     return {"linkedin": linkedin, "github": github, "portfolio": portfolio}
 
 
+def extract_links_from_pdf(file_bytes: bytes) -> list:
+    """Extract URLs embedded as clickable hyperlink annotations in a PDF."""
+    links = []
+    try:
+        pdf = pypdf.PdfReader(io.BytesIO(file_bytes))
+        for page in pdf.pages:
+            annots = page.get("/Annots")
+            if not annots:
+                continue
+            for annot_ref in annots:
+                try:
+                    obj = annot_ref.get_object()
+                    if obj.get("/Subtype") == "/Link":
+                        action = obj.get("/A")
+                        if action and action.get("/S") == "/URI":
+                            uri = action.get("/URI", "")
+                            if isinstance(uri, bytes):
+                                uri = uri.decode("utf-8", errors="ignore")
+                            if uri:
+                                links.append(str(uri))
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return links
+
+
 def extract_text_from_bytes(file_bytes: bytes, filename: str) -> str:
     """Extract text from uploaded file."""
     if filename.endswith(".txt"):
@@ -574,8 +601,18 @@ async def upload_resume(file: UploadFile = File(...)):
     """Upload and parse a resume file."""
     try:
         contents = await file.read()
-        text = extract_text_from_bytes(contents, file.filename or "")
-        detected_urls = extract_urls_from_resume(text)
+        filename = file.filename or ""
+        text = extract_text_from_bytes(contents, filename)
+
+        # For PDFs also pull URLs from clickable hyperlink annotations,
+        # which regex-on-text alone will miss when the display text differs from the href.
+        extra_urls = ""
+        if filename.endswith(".pdf"):
+            annotation_links = extract_links_from_pdf(contents)
+            if annotation_links:
+                extra_urls = "\n" + "\n".join(annotation_links)
+
+        detected_urls = extract_urls_from_resume(text + extra_urls)
         return {"success": True, "text": text, "detected_urls": detected_urls}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
