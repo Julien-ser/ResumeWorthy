@@ -102,6 +102,45 @@ class RecruiterSearchResponse(BaseModel):
 
 
 # ==================== Helper Functions ====================
+def extract_urls_from_resume(text: str) -> dict:
+    """Extract LinkedIn, GitHub, and portfolio URLs from resume text."""
+    full_url = re.compile(r'https?://[^\s,<>"\'\)]+', re.IGNORECASE)
+    bare_linkedin = re.compile(r'linkedin\.com/in/[^\s,<>"\'\)]+', re.IGNORECASE)
+    bare_github = re.compile(r'github\.com/[^\s,<>"\'\)]+', re.IGNORECASE)
+
+    all_urls = full_url.findall(text)
+    bare_li = ["https://" + u for u in bare_linkedin.findall(text)
+               if not any(u in au for au in all_urls)]
+    bare_gh = ["https://" + u for u in bare_github.findall(text)
+               if not any(u in au for au in all_urls)]
+    all_found = all_urls + bare_li + bare_gh
+
+    skip_domains = {
+        "google.com", "gmail.com", "yahoo.com", "hotmail.com", "outlook.com",
+        "twitter.com", "facebook.com", "instagram.com", "youtube.com",
+        "schemas.openxmlformats.org", "purl.org", "w3.org",
+    }
+
+    linkedin = github = portfolio = ""
+    for url in all_found:
+        url = url.rstrip(".,;)")
+        lower = url.lower()
+        if "linkedin.com/in/" in lower and not linkedin:
+            linkedin = url
+        elif "github.com/" in lower and not github:
+            parts = url.rstrip("/").split("/")
+            github = "/".join(parts[:4]) if len(parts) >= 4 else url
+        elif not portfolio:
+            try:
+                domain = urlparse(url).netloc.lower().replace("www.", "")
+                if domain and domain not in skip_domains:
+                    portfolio = url
+            except Exception:
+                pass
+
+    return {"linkedin": linkedin, "github": github, "portfolio": portfolio}
+
+
 def extract_text_from_bytes(file_bytes: bytes, filename: str) -> str:
     """Extract text from uploaded file."""
     if filename.endswith(".txt"):
@@ -536,7 +575,8 @@ async def upload_resume(file: UploadFile = File(...)):
     try:
         contents = await file.read()
         text = extract_text_from_bytes(contents, file.filename or "")
-        return {"success": True, "text": text}
+        detected_urls = extract_urls_from_resume(text)
+        return {"success": True, "text": text, "detected_urls": detected_urls}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
