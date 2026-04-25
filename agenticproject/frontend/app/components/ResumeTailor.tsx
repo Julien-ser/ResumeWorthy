@@ -11,20 +11,61 @@ interface ResumeTailorProps {
 export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTailorProps) {
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [resumeText, setResumeText] = useState("");
+  const [cachedResumeText, setCachedResumeText] = useState("");
   const [linkedinUrl, setLinkedinUrl] = useState("");
   const [portfolioUrl, setPortfolioUrl] = useState("");
   const [githubUrl, setGithubUrl] = useState("");
+  const [autoDetected, setAutoDetected] = useState({ linkedin: false, portfolio: false, github: false });
   const [jobTitle, setJobTitle] = useState("");
   const [jobDescription, setJobDescription] = useState("");
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [tailoredResume, setTailoredResume] = useState("");
   const [coverLetter, setCoverLetter] = useState("");
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.[0]) {
-      setResumeFile(e.target.files[0]);
-      setResumeText(""); // Clear text input if file is uploaded
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setResumeFile(file);
+    setResumeText("");
+    setUploading(true);
+    setError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const uploadResponse = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/upload-resume`,
+        { method: "POST", body: formData }
+      );
+
+      if (!uploadResponse.ok) throw new Error("Failed to upload resume");
+
+      const uploadData = await uploadResponse.json();
+      setCachedResumeText(uploadData.text || "");
+
+      const detected = uploadData.detected_urls || {};
+      const newAutoDetected = { linkedin: false, portfolio: false, github: false };
+
+      if (detected.linkedin && !linkedinUrl) {
+        setLinkedinUrl(detected.linkedin);
+        newAutoDetected.linkedin = true;
+      }
+      if (detected.github && !githubUrl) {
+        setGithubUrl(detected.github);
+        newAutoDetected.github = true;
+      }
+      if (detected.portfolio && !portfolioUrl) {
+        setPortfolioUrl(detected.portfolio);
+        newAutoDetected.portfolio = true;
+      }
+      setAutoDetected(newAutoDetected);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to process resume file");
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -36,30 +77,20 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
     setCoverLetter("");
 
     try {
-      let resumeContent = resumeText;
+      let resumeContent = resumeFile ? cachedResumeText : resumeText;
 
-      // If file is uploaded, read it
-      if (resumeFile) {
+      if (resumeFile && !resumeContent) {
         const formData = new FormData();
         formData.append("file", resumeFile);
-
         const uploadResponse = await fetch(
           `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/upload-resume`,
-          {
-            method: "POST",
-            body: formData,
-          }
+          { method: "POST", body: formData }
         );
-
-        if (!uploadResponse.ok) {
-          throw new Error("Failed to upload resume");
-        }
-
+        if (!uploadResponse.ok) throw new Error("Failed to upload resume");
         const uploadData = await uploadResponse.json();
         resumeContent = uploadData.text;
       }
 
-      // Call tailor-resume endpoint
       const response = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/tailor-resume`,
         {
@@ -76,9 +107,7 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
         }
       );
 
-      if (!response.ok) {
-        throw new Error("Failed to tailor resume");
-      }
+      if (!response.ok) throw new Error("Failed to tailor resume");
 
       const data = await response.json();
       setTailoredResume(data.tailored_resume || "");
@@ -103,77 +132,94 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
       const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 15;
       const lineHeight = 5;
-      let yPosition = margin;
+      const contentWidth = pageWidth - margin * 2;
+      let y = margin;
 
-      // Set font
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "normal");
+      const checkPage = (needed: number) => {
+        if (y + needed > pageHeight - margin) {
+          doc.addPage();
+          y = margin;
+        }
+      };
 
-      // Split content into lines
       const lines = content.split("\n");
 
       lines.forEach((line) => {
-        // Check if we need a new page
-        if (yPosition + lineHeight > pageHeight - margin) {
-          doc.addPage();
-          yPosition = margin;
-        }
-
-        // Handle headings (lines starting with #)
-        if (line.startsWith("### ")) {
-          doc.setFontSize(12);
+        if (line.startsWith("# ")) {
+          checkPage(lineHeight + 6);
+          const text = line.replace(/^# /, "").replace(/\*\*/g, "");
+          doc.setFontSize(18);
           doc.setFont("helvetica", "bold");
-          doc.text(line.replace(/^### /, ""), margin, yPosition);
-          doc.setFont("helvetica", "normal");
+          doc.text(text, margin, y);
+          y += lineHeight + 1;
+          doc.setDrawColor(79, 70, 229);
+          doc.setLineWidth(0.5);
+          doc.line(margin, y, pageWidth - margin, y);
+          doc.setDrawColor(0);
+          y += 4;
           doc.setFontSize(11);
-          yPosition += lineHeight + 2;
+          doc.setFont("helvetica", "normal");
         } else if (line.startsWith("## ")) {
-          doc.setFontSize(14);
+          checkPage(lineHeight + 5);
+          const text = line.replace(/^## /, "").replace(/\*\*/g, "");
+          doc.setFontSize(13);
           doc.setFont("helvetica", "bold");
-          doc.text(line.replace(/^## /, ""), margin, yPosition);
-          doc.setFont("helvetica", "normal");
+          doc.text(text, margin, y);
+          y += lineHeight;
+          doc.setDrawColor(200, 200, 200);
+          doc.setLineWidth(0.3);
+          doc.line(margin, y, pageWidth - margin, y);
+          doc.setDrawColor(0);
+          y += 3;
           doc.setFontSize(11);
-          yPosition += lineHeight + 3;
-        } else if (line.startsWith("# ")) {
-          doc.setFontSize(16);
+          doc.setFont("helvetica", "normal");
+        } else if (line.startsWith("### ")) {
+          checkPage(lineHeight + 2);
+          const text = line.replace(/^### /, "").replace(/\*\*/g, "");
+          doc.setFontSize(11);
           doc.setFont("helvetica", "bold");
-          doc.text(line.replace(/^# /, ""), margin, yPosition);
+          doc.text(text, margin, y);
+          y += lineHeight + 2;
           doc.setFont("helvetica", "normal");
-          doc.setFontSize(11);
-          yPosition += lineHeight + 4;
-        } else if (line.startsWith("- ")) {
-          // Bullet points
-          const bulletText = line.replace(/^- /, "");
-          const wrappedText = doc.splitTextToSize(bulletText, pageWidth - margin * 2 - 5);
-          wrappedText.forEach((wrappedLine: string, index: number) => {
-            if (index === 0) {
-              doc.text("• ", margin + 2, yPosition);
-              doc.text(wrappedLine, margin + 7, yPosition);
+        } else if (line.startsWith("- ") || line.startsWith("* ")) {
+          const bulletText = line.replace(/^[-*] /, "").replace(/\*\*/g, "");
+          const wrapped = doc.splitTextToSize(bulletText, contentWidth - 5);
+          wrapped.forEach((wl: string, idx: number) => {
+            checkPage(lineHeight);
+            if (idx === 0) {
+              doc.text("•", margin + 2, y);
+              doc.text(wl, margin + 7, y);
             } else {
-              doc.text(wrappedLine, margin + 7, yPosition);
+              doc.text(wl, margin + 7, y);
             }
-            yPosition += lineHeight;
+            y += lineHeight;
           });
+        } else if (/^\*\*(.+)\*\*$/.test(line.trim())) {
+          checkPage(lineHeight);
+          const text = line.trim().replace(/^\*\*|\*\*$/g, "");
+          doc.setFont("helvetica", "bold");
+          const wrapped = doc.splitTextToSize(text, contentWidth);
+          wrapped.forEach((wl: string) => {
+            checkPage(lineHeight);
+            doc.text(wl, margin, y);
+            y += lineHeight;
+          });
+          doc.setFont("helvetica", "normal");
         } else if (line.trim()) {
-          // Regular text with wrapping
-          const wrappedText = doc.splitTextToSize(line, pageWidth - margin * 2);
-          wrappedText.forEach((wrappedLine: string) => {
-            if (yPosition + lineHeight > pageHeight - margin) {
-              doc.addPage();
-              yPosition = margin;
-            }
-            doc.text(wrappedLine, margin, yPosition);
-            yPosition += lineHeight;
+          const text = line.replace(/\*\*/g, "");
+          const wrapped = doc.splitTextToSize(text, contentWidth);
+          wrapped.forEach((wl: string) => {
+            checkPage(lineHeight);
+            doc.text(wl, margin, y);
+            y += lineHeight;
           });
         } else {
-          // Empty line
-          yPosition += 2;
+          y += 2;
         }
       });
 
       doc.save(filename);
     } catch (err) {
-      // Fallback to text download
       const element = document.createElement("a");
       const file = new Blob([content], { type: "text/plain" });
       element.href = URL.createObjectURL(file);
@@ -205,7 +251,10 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
                 accept=".pdf,.docx,.txt"
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
               />
-              {resumeFile && (
+              {uploading && (
+                <p className="text-sm text-indigo-600 mt-2">Scanning resume for profile links…</p>
+              )}
+              {resumeFile && !uploading && (
                 <p className="text-sm text-green-600 mt-2">✓ {resumeFile.name} selected</p>
               )}
             </div>
@@ -236,39 +285,69 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 LinkedIn Profile
+                {autoDetected.linkedin && (
+                  <span className="ml-2 text-xs font-normal text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
+                    ✓ Auto-detected
+                  </span>
+                )}
               </label>
               <input
                 type="url"
                 value={linkedinUrl}
-                onChange={(e) => setLinkedinUrl(e.target.value)}
+                onChange={(e) => {
+                  setLinkedinUrl(e.target.value);
+                  setAutoDetected((prev) => ({ ...prev, linkedin: false }));
+                }}
                 placeholder="https://linkedin.com/in/yourprofile"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm ${
+                  autoDetected.linkedin ? "border-indigo-400 bg-indigo-50" : "border-gray-300"
+                }`}
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Portfolio Website
+                {autoDetected.portfolio && (
+                  <span className="ml-2 text-xs font-normal text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
+                    ✓ Auto-detected
+                  </span>
+                )}
               </label>
               <input
                 type="url"
                 value={portfolioUrl}
-                onChange={(e) => setPortfolioUrl(e.target.value)}
+                onChange={(e) => {
+                  setPortfolioUrl(e.target.value);
+                  setAutoDetected((prev) => ({ ...prev, portfolio: false }));
+                }}
                 placeholder="https://yourportfolio.com"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm ${
+                  autoDetected.portfolio ? "border-indigo-400 bg-indigo-50" : "border-gray-300"
+                }`}
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 GitHub Profile
+                {autoDetected.github && (
+                  <span className="ml-2 text-xs font-normal text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
+                    ✓ Auto-detected
+                  </span>
+                )}
               </label>
               <input
                 type="url"
                 value={githubUrl}
-                onChange={(e) => setGithubUrl(e.target.value)}
+                onChange={(e) => {
+                  setGithubUrl(e.target.value);
+                  setAutoDetected((prev) => ({ ...prev, github: false }));
+                }}
                 placeholder="https://github.com/yourprofile"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm ${
+                  autoDetected.github ? "border-indigo-400 bg-indigo-50" : "border-gray-300"
+                }`}
               />
             </div>
           </div>
@@ -312,7 +391,7 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
         {/* Submit Button */}
         <button
           type="submit"
-          disabled={loading || (!resumeText && !resumeFile)}
+          disabled={loading || uploading || (!resumeText && !resumeFile)}
           className="w-full bg-gradient-to-r from-primary-600 to-primary-500 text-white font-semibold py-3 rounded-lg hover:from-primary-700 hover:to-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
         >
           {loading ? "Tailoring Resume..." : "Generate Tailored Resume"}
