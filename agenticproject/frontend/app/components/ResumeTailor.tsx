@@ -41,7 +41,11 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
         { method: "POST", body: formData }
       );
 
-      if (!uploadResponse.ok) throw new Error("Failed to upload resume");
+      if (!uploadResponse.ok) {
+        let detail = "Failed to upload resume";
+        try { const d = await uploadResponse.json(); if (d?.detail) detail = String(d.detail); } catch {}
+        throw new Error(detail);
+      }
 
       const uploadData = await uploadResponse.json();
       setCachedResumeText(uploadData.text || "");
@@ -86,7 +90,11 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
           `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/upload-resume`,
           { method: "POST", body: formData }
         );
-        if (!uploadResponse.ok) throw new Error("Failed to upload resume");
+        if (!uploadResponse.ok) {
+          let detail = "Failed to upload resume";
+          try { const d = await uploadResponse.json(); if (d?.detail) detail = String(d.detail); } catch {}
+          throw new Error(detail);
+        }
         const uploadData = await uploadResponse.json();
         resumeContent = uploadData.text;
       }
@@ -107,7 +115,11 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
         }
       );
 
-      if (!response.ok) throw new Error("Failed to tailor resume");
+      if (!response.ok) {
+        let detail = "Failed to tailor resume";
+        try { const d = await response.json(); if (d?.detail) detail = String(d.detail); } catch {}
+        throw new Error(detail);
+      }
 
       const data = await response.json();
       setTailoredResume(data.tailored_resume || "");
@@ -329,7 +341,7 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
                   )}
                 </label>
                 <input
-                  type="url"
+                  type="text"
                   value={value}
                   onChange={(e) => {
                     set(e.target.value);
