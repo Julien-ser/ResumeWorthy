@@ -37,7 +37,7 @@ The backend (`agenticproject/api.py`) is a single-file FastAPI app. The frontend
 - `POST /find-recruiters` — runs 3 sequential DuckDuckGo searches for LinkedIn profiles
 - `POST /upload-resume` — parses PDF/DOCX/TXT into plain text
 
-**LLM:** OpenRouter via `langchain_openai.ChatOpenAI`, model `arcee-ai/trinity-large-preview:free`. The `get_llm()` helper is called per-request.
+**LLM:** OpenRouter via `langchain_openai.ChatOpenAI`, model `minimax/minimax-m2.5:free`. The `get_llm()` helper is called per-request.
 
 **Frontend routing:** Tab-based (not URL-based). `app/page.tsx` manages the active tab and passes state down. The three tabs render `<JobSearch>`, `<ResumeTailor>`, and `<RecruiterFinder>` components from `app/components/`.
 

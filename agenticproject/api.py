@@ -697,8 +697,18 @@ async def upload_resume(file: UploadFile = File(...)):
     """Upload and parse a resume file."""
     try:
         contents = await file.read()
-        text = extract_text_from_bytes(contents, file.filename or "")
-        profiles = extract_profile_urls(text)
+        filename = file.filename or ""
+        text = extract_text_from_bytes(contents, filename)
+
+        # For PDFs, extract clickable hyperlinks (may not appear in rendered text)
+        # and append their URIs so the URL extractor can find them.
+        combined = text
+        if filename.lower().endswith(".pdf"):
+            pdf_links = extract_links_from_pdf(contents)
+            if pdf_links:
+                combined = text + "\n" + "\n".join(pdf_links)
+
+        profiles = extract_urls_from_resume(combined)
         return {
             "success": True,
             "text": text,
