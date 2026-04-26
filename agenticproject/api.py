@@ -41,7 +41,7 @@ def get_llm():
     if not api_key:
         raise RuntimeError("OPENROUTER_API_KEY not set")
     return ChatOpenAI(
-        model="arcee-ai/trinity-large-preview:free",
+        model="minimax/minimax-m2.5:free",
         api_key=api_key,
         base_url="https://openrouter.ai/api/v1",
         temperature=0.2
@@ -108,7 +108,30 @@ def extract_text_from_bytes(file_bytes: bytes, filename: str) -> str:
         return file_bytes.decode("utf-8", errors="ignore")
     elif filename.endswith(".pdf"):
         pdf = pypdf.PdfReader(io.BytesIO(file_bytes))
-        return "\n".join((p.extract_text() or "") for p in pdf.pages)
+        text_parts = []
+        
+        for page in pdf.pages:
+            # Extract page text
+            page_text = page.extract_text() or ""
+            text_parts.append(page_text)
+            
+            # Extract links from annotations
+            try:
+                if "/Annots" in page:
+                    for annot in page["/Annots"]:
+                        try:
+                            obj = annot.get_object()
+                            if obj["/Subtype"] == "/Link" and "/A" in obj:
+                                action = obj["/A"].get_object()
+                                if "/URI" in action:
+                                    uri = action["/URI"]
+                                    text_parts.append(f"[LINK: {uri}]")
+                        except:
+                            pass
+            except:
+                pass
+        
+        return "\n".join(text_parts)
     elif filename.endswith(".docx"):
         doc = docx.Document(io.BytesIO(file_bytes))
         return "\n".join(p.text for p in doc.paragraphs)
@@ -225,6 +248,27 @@ def extract_portfolio_info(url: str) -> str:
             sections.append(line)
     
     return "\n".join(sections[:200])
+
+
+def extract_profile_urls(text: str) -> Dict[str, str]:
+    """Extract LinkedIn, GitHub, and portfolio URLs from text."""
+    profiles = {"linkedin": "", "github": "", "portfolio": ""}
+    
+    # Find all URLs in text
+    url_pattern = r'https?://[^\s]+'
+    urls = re.findall(url_pattern, text, re.IGNORECASE)
+    
+    for url in urls:
+        url_lower = url.lower()
+        if "linkedin.com" in url_lower and not profiles["linkedin"]:
+            profiles["linkedin"] = url
+        elif "github.com" in url_lower and not profiles["github"]:
+            profiles["github"] = url
+        elif not profiles["portfolio"] and any(domain in url_lower for domain in ["portfolio", "yourportfolio", "github.io"]):
+            if "github.com" not in url_lower and "linkedin.com" not in url_lower:
+                profiles["portfolio"] = url
+    
+    return profiles
 
 
 def clean_dashes(text: str) -> str:
@@ -536,7 +580,14 @@ async def upload_resume(file: UploadFile = File(...)):
     try:
         contents = await file.read()
         text = extract_text_from_bytes(contents, file.filename or "")
-        return {"success": True, "text": text}
+        profiles = extract_profile_urls(text)
+        return {
+            "success": True,
+            "text": text,
+            "linkedin_url": profiles["linkedin"],
+            "github_url": profiles["github"],
+            "portfolio_url": profiles["portfolio"]
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
