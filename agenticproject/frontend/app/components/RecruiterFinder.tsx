@@ -15,6 +15,9 @@ interface RecruiterFinderProps {
   recruiterData: any;
 }
 
+const inputClass =
+  "w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-400 focus:border-transparent outline-none text-sm transition-all placeholder:text-gray-400 bg-white";
+
 export default function RecruiterFinder({ onRecruitersFound, recruiterData }: RecruiterFinderProps) {
   const [companyName, setCompanyName] = useState("");
   const [jobTitle, setJobTitle] = useState("");
@@ -41,9 +44,7 @@ export default function RecruiterFinder({ onRecruitersFound, recruiterData }: Re
         }
       );
 
-      if (!response.ok) {
-        throw new Error("Failed to find recruiters");
-      }
+      if (!response.ok) throw new Error("Failed to find recruiters");
 
       const data = await response.json();
       setRecruiters(data.recruiters || []);
@@ -56,78 +57,88 @@ export default function RecruiterFinder({ onRecruitersFound, recruiterData }: Re
   };
 
   return (
-    <div className="p-8">
-      <h2 className="text-2xl font-bold text-gray-900 mb-6">Find Recruiters</h2>
+    <div className="p-6 md:p-8">
+      <div className="mb-6">
+        <h2 className="text-2xl font-extrabold text-gray-900 tracking-tight">Find Recruiters</h2>
+        <p className="text-sm text-gray-500 mt-1">Locate hiring managers and recruiters at your target companies.</p>
+      </div>
 
-      <form onSubmit={handleSearch} className="space-y-6 mb-8">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Company Name */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Company Name
-            </label>
-            <input
-              type="text"
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              placeholder="e.g., Google, Microsoft, Figma"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-              required
-            />
-          </div>
-
-          {/* Job Title */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Job Title (Optional)
-            </label>
-            <input
-              type="text"
-              value={jobTitle}
-              onChange={(e) => setJobTitle(e.target.value)}
-              placeholder="e.g., Software Engineer, Product Manager"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-            />
+      <form onSubmit={handleSearch} className="space-y-4 mb-8">
+        <div className="bg-gray-50/60 rounded-2xl border border-gray-100 p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-600 mb-1.5">Company Name</label>
+              <input
+                type="text"
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+                placeholder="e.g., Google, Microsoft, Figma"
+                className={inputClass}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-600 mb-1.5">
+                Job Title <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <input
+                type="text"
+                value={jobTitle}
+                onChange={(e) => setJobTitle(e.target.value)}
+                placeholder="e.g., Software Engineer, Product Manager"
+                className={inputClass}
+              />
+            </div>
           </div>
         </div>
 
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-gradient-to-r from-primary-600 to-primary-500 text-white font-semibold py-3 rounded-lg hover:from-primary-700 hover:to-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          className="w-full bg-gradient-to-r from-primary-600 to-primary-500 text-white font-bold py-3.5 rounded-xl hover:from-primary-700 hover:to-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm text-base tracking-tight"
         >
-          {loading ? "Searching..." : "Find Recruiters"}
+          {loading ? (
+            <span className="flex items-center justify-center gap-2">
+              <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              Searching…
+            </span>
+          ) : (
+            "Find Recruiters"
+          )}
         </button>
       </form>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
           {error}
         </div>
       )}
 
-      {/* Results */}
       {recruiters.length > 0 && (
-        <div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Found {recruiters.length} Recruiters
-          </h3>
+        <div className="space-y-6">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+            {recruiters.length} recruiter{recruiters.length !== 1 ? "s" : ""} found
+          </p>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {recruiters.map((recruiter, idx) => (
               <div
                 key={idx}
-                className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                className="group border border-gray-100 rounded-2xl p-5 hover:shadow-md hover:border-primary-100 transition-all bg-white"
               >
                 <div className="mb-3">
-                  <h4 className="font-semibold text-gray-900 text-lg">{recruiter.name}</h4>
-                  <p className="text-sm text-indigo-600 font-medium">{recruiter.title}</p>
-                  <p className="text-xs text-gray-600 mt-1">at {recruiter.company}</p>
+                  <h4 className="font-bold text-gray-900 text-base">{recruiter.name}</h4>
+                  <p className="text-sm font-semibold text-primary-600 mt-0.5">{recruiter.title}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">at {recruiter.company}</p>
                 </div>
 
                 {recruiter.connection_strategy && (
-                  <div className="mb-3 bg-blue-50 p-3 rounded text-xs text-blue-800 border border-blue-100">
-                    <strong>Outreach:</strong> {recruiter.connection_strategy}
-                  </div>
+                  <p className="mb-3 bg-amber-50 px-3 py-2 rounded-xl text-xs text-amber-800 border border-amber-100 font-medium">
+                    {recruiter.connection_strategy}
+                  </p>
                 )}
 
                 {recruiter.linkedin_url && (
@@ -135,32 +146,40 @@ export default function RecruiterFinder({ onRecruitersFound, recruiterData }: Re
                     href={recruiter.linkedin_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-block px-4 py-2 bg-primary-50 text-primary-600 rounded hover:bg-primary-100 text-sm font-medium transition-colors"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-600 bg-primary-50 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition-colors border border-primary-100"
                   >
-                    LinkedIn Profile →
+                    LinkedIn Profile
+                    <span className="group-hover:translate-x-0.5 transition-transform inline-block">→</span>
                   </a>
                 )}
               </div>
             ))}
           </div>
 
-          {/* Outreach Tips */}
-          <div className="mt-8 bg-green-50 border border-green-200 rounded-lg p-6">
-            <h4 className="font-semibold text-green-900 mb-3">Recruiter Outreach Tips</h4>
-            <ul className="space-y-2 text-green-800 text-sm">
-              <li>✓ Personalize your message referencing their recent activity or posts</li>
-              <li>✓ Mention mutual connections or companies you've both worked at</li>
-              <li>✓ Keep initial message under 50 words - just request 15-min call</li>
-              <li>✓ Send on Tuesday-Thursday, 10am-3pm for best response rates</li>
-              <li>✓ Include a link to your tailored resume or portfolio</li>
+          <div className="bg-amber-50 border border-amber-100 rounded-2xl p-6">
+            <h4 className="text-xs font-bold text-amber-900 uppercase tracking-widest mb-3">Outreach Tips</h4>
+            <ul className="space-y-2 text-sm text-amber-800">
+              {[
+                "Personalize your message referencing their recent activity or posts",
+                "Mention mutual connections or companies you've both worked at",
+                "Keep initial message under 50 words — just request a 15-min call",
+                "Send on Tuesday–Thursday, 10am–3pm for best response rates",
+                "Include a link to your tailored resume or portfolio",
+              ].map((tip, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <span className="text-amber-500 font-bold flex-shrink-0 mt-0.5">✓</span>
+                  {tip}
+                </li>
+              ))}
             </ul>
           </div>
         </div>
       )}
 
       {!loading && recruiters.length === 0 && companyName && (
-        <div className="text-center py-12 text-gray-500">
-          <p>No recruiters found. Try a different company name or check LinkedIn directly.</p>
+        <div className="text-center py-16 text-gray-400">
+          <p className="font-semibold">No recruiters found.</p>
+          <p className="text-sm mt-1">Try a different company name or check LinkedIn directly.</p>
         </div>
       )}
     </div>

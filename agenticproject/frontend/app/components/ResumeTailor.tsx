@@ -50,19 +50,18 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
       const uploadData = await uploadResponse.json();
       setCachedResumeText(uploadData.text || "");
 
-      const detected = uploadData.detected_urls || {};
       const newAutoDetected = { linkedin: false, portfolio: false, github: false };
 
-      if (detected.linkedin && !linkedinUrl) {
-        setLinkedinUrl(detected.linkedin);
+      if (uploadData.linkedin_url && !linkedinUrl) {
+        setLinkedinUrl(uploadData.linkedin_url);
         newAutoDetected.linkedin = true;
       }
-      if (detected.github && !githubUrl) {
-        setGithubUrl(detected.github);
+      if (uploadData.github_url && !githubUrl) {
+        setGithubUrl(uploadData.github_url);
         newAutoDetected.github = true;
       }
-      if (detected.portfolio && !portfolioUrl) {
-        setPortfolioUrl(detected.portfolio);
+      if (uploadData.portfolio_url && !portfolioUrl) {
+        setPortfolioUrl(uploadData.portfolio_url);
         newAutoDetected.portfolio = true;
       }
       setAutoDetected(newAutoDetected);
