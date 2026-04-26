@@ -19,6 +19,14 @@ import pypdf
 import docx
 import io
 import requests
+
+# PyMuPDF provides the most reliable PDF annotation/hyperlink extraction
+try:
+    import fitz  # PyMuPDF
+    _HAS_FITZ = True
+except ImportError:
+    _HAS_FITZ = False
+
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
@@ -41,7 +49,7 @@ def get_llm():
     if not api_key:
         raise RuntimeError("OPENROUTER_API_KEY not set")
     return ChatOpenAI(
-        model="arcee-ai/trinity-large-preview:free",
+        model="minimax/minimax-m2.5:free",
         api_key=api_key,
         base_url="https://openrouter.ai/api/v1",
         temperature=0.2
@@ -142,7 +150,32 @@ def extract_urls_from_resume(text: str) -> dict:
 
 
 def extract_links_from_pdf(file_bytes: bytes) -> list:
-    """Extract URLs embedded as clickable hyperlink annotations in a PDF."""
+    """Extract URLs embedded as clickable hyperlink annotations in a PDF.
+
+    Uses PyMuPDF when available (handles all annotation types + indirect refs
+    natively). Falls back to pypdf manual traversal.
+    """
+    if _HAS_FITZ:
+        return _extract_links_fitz(file_bytes)
+    return _extract_links_pypdf(file_bytes)
+
+
+def _extract_links_fitz(file_bytes: bytes) -> list:
+    links = []
+    try:
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        for page in doc:
+            for link in page.get_links():
+                uri = link.get("uri", "")
+                if uri:
+                    links.append(uri)
+        doc.close()
+    except Exception:
+        pass
+    return links
+
+
+def _extract_links_pypdf(file_bytes: bytes) -> list:
     links = []
     try:
         pdf = pypdf.PdfReader(io.BytesIO(file_bytes))
@@ -150,7 +183,6 @@ def extract_links_from_pdf(file_bytes: bytes) -> list:
             annots = page.get("/Annots")
             if not annots:
                 continue
-            # Resolve the annotations array itself if it's an indirect reference
             if hasattr(annots, "get_object"):
                 annots = annots.get_object()
             for annot_ref in annots:
@@ -161,7 +193,6 @@ def extract_links_from_pdf(file_bytes: bytes) -> list:
                     action = obj.get("/A")
                     if action is None:
                         continue
-                    # Resolve the action dict if stored as an indirect reference (common in Word/Acrobat PDFs)
                     if hasattr(action, "get_object"):
                         action = action.get_object()
                     if not action:
