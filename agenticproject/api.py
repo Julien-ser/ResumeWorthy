@@ -218,7 +218,30 @@ def extract_text_from_bytes(file_bytes: bytes, filename: str) -> str:
         return file_bytes.decode("utf-8", errors="ignore")
     elif filename.endswith(".pdf"):
         pdf = pypdf.PdfReader(io.BytesIO(file_bytes))
-        return "\n".join((p.extract_text() or "") for p in pdf.pages)
+        text_parts = []
+        
+        for page in pdf.pages:
+            # Extract page text
+            page_text = page.extract_text() or ""
+            text_parts.append(page_text)
+            
+            # Extract links from annotations
+            try:
+                if "/Annots" in page:
+                    for annot in page["/Annots"]:
+                        try:
+                            obj = annot.get_object()
+                            if obj["/Subtype"] == "/Link" and "/A" in obj:
+                                action = obj["/A"].get_object()
+                                if "/URI" in action:
+                                    uri = action["/URI"]
+                                    text_parts.append(f"[LINK: {uri}]")
+                        except:
+                            pass
+            except:
+                pass
+        
+        return "\n".join(text_parts)
     elif filename.endswith(".docx"):
         doc = docx.Document(io.BytesIO(file_bytes))
         return "\n".join(p.text for p in doc.paragraphs)
@@ -335,6 +358,27 @@ def extract_portfolio_info(url: str) -> str:
             sections.append(line)
     
     return "\n".join(sections[:200])
+
+
+def extract_profile_urls(text: str) -> Dict[str, str]:
+    """Extract LinkedIn, GitHub, and portfolio URLs from text."""
+    profiles = {"linkedin": "", "github": "", "portfolio": ""}
+    
+    # Find all URLs in text
+    url_pattern = r'https?://[^\s]+'
+    urls = re.findall(url_pattern, text, re.IGNORECASE)
+    
+    for url in urls:
+        url_lower = url.lower()
+        if "linkedin.com" in url_lower and not profiles["linkedin"]:
+            profiles["linkedin"] = url
+        elif "github.com" in url_lower and not profiles["github"]:
+            profiles["github"] = url
+        elif not profiles["portfolio"] and any(domain in url_lower for domain in ["portfolio", "yourportfolio", "github.io"]):
+            if "github.com" not in url_lower and "linkedin.com" not in url_lower:
+                profiles["portfolio"] = url
+    
+    return profiles
 
 
 def clean_dashes(text: str) -> str:
@@ -653,19 +697,15 @@ async def upload_resume(file: UploadFile = File(...)):
     """Upload and parse a resume file."""
     try:
         contents = await file.read()
-        filename = file.filename or ""
-        text = extract_text_from_bytes(contents, filename)
-
-        # For PDFs also pull URLs from clickable hyperlink annotations,
-        # which regex-on-text alone will miss when the display text differs from the href.
-        extra_urls = ""
-        if filename.endswith(".pdf"):
-            annotation_links = extract_links_from_pdf(contents)
-            if annotation_links:
-                extra_urls = "\n" + "\n".join(annotation_links)
-
-        detected_urls = extract_urls_from_resume(text + extra_urls)
-        return {"success": True, "text": text, "detected_urls": detected_urls}
+        text = extract_text_from_bytes(contents, file.filename or "")
+        profiles = extract_profile_urls(text)
+        return {
+            "success": True,
+            "text": text,
+            "linkedin_url": profiles["linkedin"],
+            "github_url": profiles["github"],
+            "portfolio_url": profiles["portfolio"]
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
