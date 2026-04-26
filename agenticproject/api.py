@@ -6,6 +6,7 @@ Serves as FastAPI backend for Next.js frontend
 import os
 import json
 import re
+import asyncio
 from typing import List, Dict, Any, Literal
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -112,9 +113,9 @@ class RecruiterSearchResponse(BaseModel):
 # ==================== Helper Functions ====================
 def extract_urls_from_resume(text: str) -> dict:
     """Extract LinkedIn, GitHub, and portfolio URLs from resume text."""
-    full_url = re.compile(r'https?://[^\s,<>"\'\)]+', re.IGNORECASE)
-    bare_linkedin = re.compile(r'linkedin\.com/in/[^\s,<>"\'\)]+', re.IGNORECASE)
-    bare_github = re.compile(r'github\.com/[^\s,<>"\'\)]+', re.IGNORECASE)
+    full_url = re.compile(r'https?://[^\s,<>"\'\)\]]+', re.IGNORECASE)
+    bare_linkedin = re.compile(r'linkedin\.com/in/[^\s,<>"\'\)\]]+', re.IGNORECASE)
+    bare_github = re.compile(r'github\.com/[^\s,<>"\'\)\]]+', re.IGNORECASE)
 
     all_urls = full_url.findall(text)
     bare_li = ["https://" + u for u in bare_linkedin.findall(text)
@@ -131,7 +132,7 @@ def extract_urls_from_resume(text: str) -> dict:
 
     linkedin = github = portfolio = ""
     for url in all_found:
-        url = url.rstrip(".,;)")
+        url = url.rstrip(".,;)]")
         lower = url.lower()
         if "linkedin.com/in/" in lower and not linkedin:
             linkedin = url
@@ -512,45 +513,33 @@ async def tailor_resume(request: ResumeTailorRequest):
     """Tailor resume and generate cover letter for a specific job."""
     try:
         llm = get_llm()
-        
-        # Fetch additional profile information
-        linkedin_info = ""
-        github_info = ""
-        portfolio_info = ""
-        
-        if request.linkedin_url:
+
+        # Fetch all profile URLs concurrently (sync functions run in thread pool)
+        async def safe_thread(fn, arg):
             try:
-                linkedin_info = extract_linkedin_info(request.linkedin_url)
-            except:
-                pass
-        
-        if request.github_url:
-            try:
-                github_info = extract_github_info(request.github_url)
-            except:
-                pass
-        
-        if request.portfolio_url:
-            try:
-                portfolio_info = extract_portfolio_info(request.portfolio_url)
-            except:
-                pass
-        
+                return await asyncio.to_thread(fn, arg)
+            except Exception:
+                return ""
+
+        async def noop():
+            return ""
+
+        linkedin_info, github_info, portfolio_info = await asyncio.gather(
+            safe_thread(extract_linkedin_info, request.linkedin_url) if request.linkedin_url else noop(),
+            safe_thread(extract_github_info, request.github_url) if request.github_url else noop(),
+            safe_thread(extract_portfolio_info, request.portfolio_url) if request.portfolio_url else noop(),
+        )
+
         # Build comprehensive context
         context_parts = [f"Original Resume:\n{request.resume_text[:2500]}"]
-        
         if linkedin_info:
             context_parts.append(f"LinkedIn Profile Info:\n{linkedin_info[:500]}")
-        
         if github_info:
             context_parts.append(f"GitHub Profile Info:\n{github_info[:500]}")
-        
         if portfolio_info:
             context_parts.append(f"Portfolio Info:\n{portfolio_info[:300]}")
-        
         candidate_context = "\n\n".join(context_parts)
-        
-        # Build resume prompt with enhanced context
+
         resume_prompt = (
             f"You are an expert resume writer specializing in ATS-optimized resumes.\n\n"
             f"Target Job:\n{request.job_description[:2000]}\n\n"
@@ -563,15 +552,7 @@ async def tailor_resume(request: ResumeTailorRequest):
             f"5. Uses hyphens instead of dashes\n\n"
             f"Make it concise, impactful, and specific to this role."
         )
-        
-        try:
-            resume_response = llm.invoke([HumanMessage(content=resume_prompt)])
-        except Exception as llm_err:
-            raise HTTPException(status_code=502, detail=f"LLM API error: {llm_err}")
-        tailored_resume = resume_response.content if hasattr(resume_response, 'content') else str(resume_response)
-        tailored_resume = clean_dashes(tailored_resume)
 
-        # Generate cover letter with rich context
         letter_prompt = (
             f"Write a compelling cover letter (150-200 words) for this position.\n\n"
             f"Company: {request.company_name}\n"
@@ -586,16 +567,21 @@ async def tailor_resume(request: ResumeTailorRequest):
             f"Make it personal and specific to this opportunity."
         )
 
+        # Run both LLM calls concurrently
         try:
-            letter_response = llm.invoke([HumanMessage(content=letter_prompt)])
+            resume_response, letter_response = await asyncio.gather(
+                llm.ainvoke([HumanMessage(content=resume_prompt)]),
+                llm.ainvoke([HumanMessage(content=letter_prompt)]),
+            )
         except Exception as llm_err:
-            raise HTTPException(status_code=502, detail=f"LLM API error (cover letter): {llm_err}")
-        cover_letter = letter_response.content if hasattr(letter_response, 'content') else str(letter_response)
-        cover_letter = clean_dashes(cover_letter)
+            raise HTTPException(status_code=502, detail=f"LLM API error: {llm_err}")
+
+        tailored_resume = clean_dashes(resume_response.content if hasattr(resume_response, "content") else str(resume_response))
+        cover_letter = clean_dashes(letter_response.content if hasattr(letter_response, "content") else str(letter_response))
 
         return ResumeTailorResponse(
             tailored_resume=tailored_resume,
-            cover_letter=cover_letter
+            cover_letter=cover_letter,
         )
 
     except HTTPException:

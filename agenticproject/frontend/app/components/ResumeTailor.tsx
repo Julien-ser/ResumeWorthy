@@ -131,38 +131,45 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
     }
   };
 
-  const downloadPDF = (content: string, filename: string) => {
+  const downloadResumePDF = (content: string) => {
     try {
-      const doc = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4",
-      });
-
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 18;
       const lineHeight = 5.5;
       const contentWidth = pageWidth - margin * 2;
       let y = margin;
+      let nameLineDone = false;
 
       const checkPage = (needed: number) => {
-        if (y + needed > pageHeight - margin) {
-          doc.addPage();
-          y = margin;
-        }
+        if (y + needed > pageHeight - margin) { doc.addPage(); y = margin; }
       };
 
-      const lines = content.split("\n");
-
-      lines.forEach((line) => {
+      for (const line of content.split("\n")) {
         if (line.startsWith("# ")) {
-          checkPage(lineHeight + 8);
-          const text = line.replace(/^# /, "").replace(/\*\*/g, "");
+          checkPage(lineHeight + 16);
           doc.setFontSize(20);
           doc.setFont("helvetica", "bold");
-          doc.text(text, margin, y);
+          doc.text(line.replace(/^# /, "").replace(/\*\*/g, ""), margin, y);
           y += lineHeight + 2;
+
+          if (!nameLineDone) {
+            nameLineDone = true;
+            const parts: string[] = [];
+            if (linkedinUrl) parts.push(linkedinUrl.replace(/^https?:\/\//, ""));
+            if (githubUrl) parts.push(githubUrl.replace(/^https?:\/\//, ""));
+            if (portfolioUrl) parts.push(portfolioUrl.replace(/^https?:\/\//, ""));
+            if (parts.length) {
+              doc.setFontSize(9);
+              doc.setFont("helvetica", "normal");
+              doc.setTextColor(80, 80, 80);
+              doc.text(parts.join("   |   "), margin, y);
+              doc.setTextColor(0, 0, 0);
+              y += 5;
+            }
+          }
+
           doc.setDrawColor(212, 107, 71);
           doc.setLineWidth(0.7);
           doc.line(margin, y, pageWidth - margin, y);
@@ -227,14 +234,72 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
         } else {
           y += 2.5;
         }
-      });
+      }
 
-      doc.save(filename);
+      doc.save("tailored_resume.pdf");
     } catch {
       const element = document.createElement("a");
       const file = new Blob([content], { type: "text/plain" });
       element.href = URL.createObjectURL(file);
-      element.download = filename.replace(".pdf", ".txt");
+      element.download = "tailored_resume.txt";
+      document.body.appendChild(element);
+      element.click();
+      document.body.removeChild(element);
+    }
+  };
+
+  const downloadCoverLetterPDF = (content: string) => {
+    try {
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 25;
+      const lineHeight = 7;
+      const paraGap = 5;
+      const contentWidth = pageWidth - margin * 2;
+      let y = margin;
+
+      const checkPage = (needed: number) => {
+        if (y + needed > pageHeight - margin) { doc.addPage(); y = margin; }
+      };
+
+      // Header row: date left, job title right
+      const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(120, 120, 120);
+      doc.text(today, margin, y);
+      if (jobTitle) doc.text(`Re: ${jobTitle}`, pageWidth - margin, y, { align: "right" });
+      doc.setTextColor(0, 0, 0);
+      y += 4;
+      doc.setDrawColor(212, 107, 71);
+      doc.setLineWidth(0.5);
+      doc.line(margin, y, pageWidth - margin, y);
+      doc.setDrawColor(0);
+      y += 10;
+
+      doc.setFontSize(11.5);
+
+      for (const line of content.split("\n")) {
+        if (!line.trim()) {
+          y += paraGap;
+          continue;
+        }
+        const text = line.replace(/\*\*/g, "");
+        const wrapped = doc.splitTextToSize(text, contentWidth);
+        wrapped.forEach((wl: string) => {
+          checkPage(lineHeight);
+          doc.text(wl, margin, y);
+          y += lineHeight;
+        });
+      }
+
+      doc.save("cover_letter.pdf");
+    } catch {
+      const element = document.createElement("a");
+      const file = new Blob([content], { type: "text/plain" });
+      element.href = URL.createObjectURL(file);
+      element.download = "cover_letter.txt";
       document.body.appendChild(element);
       element.click();
       document.body.removeChild(element);
@@ -415,13 +480,13 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
           <ResultCard
             title="Tailored Resume"
             content={tailoredResume}
-            onDownload={() => downloadPDF(tailoredResume, "tailored_resume.pdf")}
+            onDownload={() => downloadResumePDF(tailoredResume)}
           />
           {coverLetter && (
             <ResultCard
               title="Cover Letter"
               content={coverLetter}
-              onDownload={() => downloadPDF(coverLetter, "cover_letter.pdf")}
+              onDownload={() => downloadCoverLetterPDF(coverLetter)}
             />
           )}
         </div>
