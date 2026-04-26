@@ -19,6 +19,14 @@ import pypdf
 import docx
 import io
 import requests
+
+# PyMuPDF provides the most reliable PDF annotation/hyperlink extraction
+try:
+    import fitz  # PyMuPDF
+    _HAS_FITZ = True
+except ImportError:
+    _HAS_FITZ = False
+
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
@@ -102,6 +110,108 @@ class RecruiterSearchResponse(BaseModel):
 
 
 # ==================== Helper Functions ====================
+def extract_urls_from_resume(text: str) -> dict:
+    """Extract LinkedIn, GitHub, and portfolio URLs from resume text."""
+    full_url = re.compile(r'https?://[^\s,<>"\'\)]+', re.IGNORECASE)
+    bare_linkedin = re.compile(r'linkedin\.com/in/[^\s,<>"\'\)]+', re.IGNORECASE)
+    bare_github = re.compile(r'github\.com/[^\s,<>"\'\)]+', re.IGNORECASE)
+
+    all_urls = full_url.findall(text)
+    bare_li = ["https://" + u for u in bare_linkedin.findall(text)
+               if not any(u in au for au in all_urls)]
+    bare_gh = ["https://" + u for u in bare_github.findall(text)
+               if not any(u in au for au in all_urls)]
+    all_found = all_urls + bare_li + bare_gh
+
+    skip_domains = {
+        "google.com", "gmail.com", "yahoo.com", "hotmail.com", "outlook.com",
+        "twitter.com", "facebook.com", "instagram.com", "youtube.com",
+        "schemas.openxmlformats.org", "purl.org", "w3.org",
+    }
+
+    linkedin = github = portfolio = ""
+    for url in all_found:
+        url = url.rstrip(".,;)")
+        lower = url.lower()
+        if "linkedin.com/in/" in lower and not linkedin:
+            linkedin = url
+        elif "github.com/" in lower and not github:
+            parts = url.rstrip("/").split("/")
+            github = "/".join(parts[:4]) if len(parts) >= 4 else url
+        elif not portfolio:
+            try:
+                domain = urlparse(url).netloc.lower().replace("www.", "")
+                if domain and domain not in skip_domains:
+                    portfolio = url
+            except Exception:
+                pass
+
+    return {"linkedin": linkedin, "github": github, "portfolio": portfolio}
+
+
+def extract_links_from_pdf(file_bytes: bytes) -> list:
+    """Extract URLs embedded as clickable hyperlink annotations in a PDF.
+
+    Uses PyMuPDF when available (handles all annotation types + indirect refs
+    natively). Falls back to pypdf manual traversal.
+    """
+    if _HAS_FITZ:
+        return _extract_links_fitz(file_bytes)
+    return _extract_links_pypdf(file_bytes)
+
+
+def _extract_links_fitz(file_bytes: bytes) -> list:
+    links = []
+    try:
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        for page in doc:
+            for link in page.get_links():
+                uri = link.get("uri", "")
+                if uri:
+                    links.append(uri)
+        doc.close()
+    except Exception:
+        pass
+    return links
+
+
+def _extract_links_pypdf(file_bytes: bytes) -> list:
+    links = []
+    try:
+        pdf = pypdf.PdfReader(io.BytesIO(file_bytes))
+        for page in pdf.pages:
+            annots = page.get("/Annots")
+            if not annots:
+                continue
+            if hasattr(annots, "get_object"):
+                annots = annots.get_object()
+            for annot_ref in annots:
+                try:
+                    obj = annot_ref.get_object() if hasattr(annot_ref, "get_object") else annot_ref
+                    if obj.get("/Subtype") != "/Link":
+                        continue
+                    action = obj.get("/A")
+                    if action is None:
+                        continue
+                    if hasattr(action, "get_object"):
+                        action = action.get_object()
+                    if not action:
+                        continue
+                    if action.get("/S") != "/URI":
+                        continue
+                    uri = action.get("/URI", "")
+                    if isinstance(uri, bytes):
+                        uri = uri.decode("utf-8", errors="ignore")
+                    uri = str(uri).strip()
+                    if uri:
+                        links.append(uri)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return links
+
+
 def extract_text_from_bytes(file_bytes: bytes, filename: str) -> str:
     """Extract text from uploaded file."""
     if filename.endswith(".txt"):
@@ -454,10 +564,13 @@ async def tailor_resume(request: ResumeTailorRequest):
             f"Make it concise, impactful, and specific to this role."
         )
         
-        resume_response = llm.invoke([HumanMessage(content=resume_prompt)])
+        try:
+            resume_response = llm.invoke([HumanMessage(content=resume_prompt)])
+        except Exception as llm_err:
+            raise HTTPException(status_code=502, detail=f"LLM API error: {llm_err}")
         tailored_resume = resume_response.content if hasattr(resume_response, 'content') else str(resume_response)
         tailored_resume = clean_dashes(tailored_resume)
-        
+
         # Generate cover letter with rich context
         letter_prompt = (
             f"Write a compelling cover letter (150-200 words) for this position.\n\n"
@@ -472,16 +585,21 @@ async def tailor_resume(request: ResumeTailorRequest):
             f"5. Professional tone, ready to copy/paste\n\n"
             f"Make it personal and specific to this opportunity."
         )
-        
-        letter_response = llm.invoke([HumanMessage(content=letter_prompt)])
+
+        try:
+            letter_response = llm.invoke([HumanMessage(content=letter_prompt)])
+        except Exception as llm_err:
+            raise HTTPException(status_code=502, detail=f"LLM API error (cover letter): {llm_err}")
         cover_letter = letter_response.content if hasattr(letter_response, 'content') else str(letter_response)
         cover_letter = clean_dashes(cover_letter)
-        
+
         return ResumeTailorResponse(
             tailored_resume=tailored_resume,
             cover_letter=cover_letter
         )
-    
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

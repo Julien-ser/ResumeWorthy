@@ -11,20 +11,65 @@ interface ResumeTailorProps {
 export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTailorProps) {
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [resumeText, setResumeText] = useState("");
+  const [cachedResumeText, setCachedResumeText] = useState("");
   const [linkedinUrl, setLinkedinUrl] = useState("");
   const [portfolioUrl, setPortfolioUrl] = useState("");
   const [githubUrl, setGithubUrl] = useState("");
+  const [autoDetected, setAutoDetected] = useState({ linkedin: false, portfolio: false, github: false });
   const [jobTitle, setJobTitle] = useState("");
   const [jobDescription, setJobDescription] = useState("");
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [tailoredResume, setTailoredResume] = useState("");
   const [coverLetter, setCoverLetter] = useState("");
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.[0]) {
-      setResumeFile(e.target.files[0]);
-      setResumeText(""); // Clear text input if file is uploaded
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setResumeFile(file);
+    setResumeText("");
+    setUploading(true);
+    setError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const uploadResponse = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/upload-resume`,
+        { method: "POST", body: formData }
+      );
+
+      if (!uploadResponse.ok) {
+        let detail = "Failed to upload resume";
+        try { const d = await uploadResponse.json(); if (d?.detail) detail = String(d.detail); } catch {}
+        throw new Error(detail);
+      }
+
+      const uploadData = await uploadResponse.json();
+      setCachedResumeText(uploadData.text || "");
+
+      const detected = uploadData.detected_urls || {};
+      const newAutoDetected = { linkedin: false, portfolio: false, github: false };
+
+      if (detected.linkedin && !linkedinUrl) {
+        setLinkedinUrl(detected.linkedin);
+        newAutoDetected.linkedin = true;
+      }
+      if (detected.github && !githubUrl) {
+        setGithubUrl(detected.github);
+        newAutoDetected.github = true;
+      }
+      if (detected.portfolio && !portfolioUrl) {
+        setPortfolioUrl(detected.portfolio);
+        newAutoDetected.portfolio = true;
+      }
+      setAutoDetected(newAutoDetected);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to process resume file");
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -36,30 +81,24 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
     setCoverLetter("");
 
     try {
-      let resumeContent = resumeText;
+      let resumeContent = resumeFile ? cachedResumeText : resumeText;
 
-      // If file is uploaded, read it
-      if (resumeFile) {
+      if (resumeFile && !resumeContent) {
         const formData = new FormData();
         formData.append("file", resumeFile);
-
         const uploadResponse = await fetch(
           `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/upload-resume`,
-          {
-            method: "POST",
-            body: formData,
-          }
+          { method: "POST", body: formData }
         );
-
         if (!uploadResponse.ok) {
-          throw new Error("Failed to upload resume");
+          let detail = "Failed to upload resume";
+          try { const d = await uploadResponse.json(); if (d?.detail) detail = String(d.detail); } catch {}
+          throw new Error(detail);
         }
-
         const uploadData = await uploadResponse.json();
         resumeContent = uploadData.text;
       }
 
-      // Call tailor-resume endpoint
       const response = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/tailor-resume`,
         {
@@ -77,7 +116,9 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
       );
 
       if (!response.ok) {
-        throw new Error("Failed to tailor resume");
+        let detail = "Failed to tailor resume";
+        try { const d = await response.json(); if (d?.detail) detail = String(d.detail); } catch {}
+        throw new Error(detail);
       }
 
       const data = await response.json();
@@ -101,79 +142,96 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
 
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 15;
-      const lineHeight = 5;
-      let yPosition = margin;
+      const margin = 18;
+      const lineHeight = 5.5;
+      const contentWidth = pageWidth - margin * 2;
+      let y = margin;
 
-      // Set font
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "normal");
+      const checkPage = (needed: number) => {
+        if (y + needed > pageHeight - margin) {
+          doc.addPage();
+          y = margin;
+        }
+      };
 
-      // Split content into lines
       const lines = content.split("\n");
 
       lines.forEach((line) => {
-        // Check if we need a new page
-        if (yPosition + lineHeight > pageHeight - margin) {
-          doc.addPage();
-          yPosition = margin;
-        }
-
-        // Handle headings (lines starting with #)
-        if (line.startsWith("### ")) {
-          doc.setFontSize(12);
+        if (line.startsWith("# ")) {
+          checkPage(lineHeight + 8);
+          const text = line.replace(/^# /, "").replace(/\*\*/g, "");
+          doc.setFontSize(20);
           doc.setFont("helvetica", "bold");
-          doc.text(line.replace(/^### /, ""), margin, yPosition);
-          doc.setFont("helvetica", "normal");
+          doc.text(text, margin, y);
+          y += lineHeight + 2;
+          doc.setDrawColor(212, 107, 71);
+          doc.setLineWidth(0.7);
+          doc.line(margin, y, pageWidth - margin, y);
+          doc.setDrawColor(0);
+          y += 5;
           doc.setFontSize(11);
-          yPosition += lineHeight + 2;
+          doc.setFont("helvetica", "normal");
         } else if (line.startsWith("## ")) {
+          checkPage(lineHeight + 6);
+          const text = line.replace(/^## /, "").replace(/\*\*/g, "");
           doc.setFontSize(14);
           doc.setFont("helvetica", "bold");
-          doc.text(line.replace(/^## /, ""), margin, yPosition);
-          doc.setFont("helvetica", "normal");
+          doc.text(text, margin, y);
+          y += lineHeight + 1;
+          doc.setDrawColor(209, 213, 219);
+          doc.setLineWidth(0.3);
+          doc.line(margin, y, pageWidth - margin, y);
+          doc.setDrawColor(0);
+          y += 4;
           doc.setFontSize(11);
-          yPosition += lineHeight + 3;
-        } else if (line.startsWith("# ")) {
-          doc.setFontSize(16);
+          doc.setFont("helvetica", "normal");
+        } else if (line.startsWith("### ")) {
+          checkPage(lineHeight + 3);
+          const text = line.replace(/^### /, "").replace(/\*\*/g, "");
+          doc.setFontSize(11.5);
           doc.setFont("helvetica", "bold");
-          doc.text(line.replace(/^# /, ""), margin, yPosition);
+          doc.text(text, margin, y);
+          y += lineHeight + 2;
           doc.setFont("helvetica", "normal");
-          doc.setFontSize(11);
-          yPosition += lineHeight + 4;
-        } else if (line.startsWith("- ")) {
-          // Bullet points
-          const bulletText = line.replace(/^- /, "");
-          const wrappedText = doc.splitTextToSize(bulletText, pageWidth - margin * 2 - 5);
-          wrappedText.forEach((wrappedLine: string, index: number) => {
-            if (index === 0) {
-              doc.text("• ", margin + 2, yPosition);
-              doc.text(wrappedLine, margin + 7, yPosition);
+        } else if (line.startsWith("- ") || line.startsWith("* ")) {
+          const bulletText = line.replace(/^[-*] /, "").replace(/\*\*/g, "");
+          const wrapped = doc.splitTextToSize(bulletText, contentWidth - 6);
+          wrapped.forEach((wl: string, idx: number) => {
+            checkPage(lineHeight);
+            if (idx === 0) {
+              doc.text("•", margin + 2, y);
+              doc.text(wl, margin + 7, y);
             } else {
-              doc.text(wrappedLine, margin + 7, yPosition);
+              doc.text(wl, margin + 7, y);
             }
-            yPosition += lineHeight;
+            y += lineHeight;
           });
+        } else if (/^\*\*(.+)\*\*$/.test(line.trim())) {
+          checkPage(lineHeight);
+          const text = line.trim().replace(/^\*\*|\*\*$/g, "");
+          doc.setFont("helvetica", "bold");
+          const wrapped = doc.splitTextToSize(text, contentWidth);
+          wrapped.forEach((wl: string) => {
+            checkPage(lineHeight);
+            doc.text(wl, margin, y);
+            y += lineHeight;
+          });
+          doc.setFont("helvetica", "normal");
         } else if (line.trim()) {
-          // Regular text with wrapping
-          const wrappedText = doc.splitTextToSize(line, pageWidth - margin * 2);
-          wrappedText.forEach((wrappedLine: string) => {
-            if (yPosition + lineHeight > pageHeight - margin) {
-              doc.addPage();
-              yPosition = margin;
-            }
-            doc.text(wrappedLine, margin, yPosition);
-            yPosition += lineHeight;
+          const text = line.replace(/\*\*/g, "");
+          const wrapped = doc.splitTextToSize(text, contentWidth);
+          wrapped.forEach((wl: string) => {
+            checkPage(lineHeight);
+            doc.text(wl, margin, y);
+            y += lineHeight;
           });
         } else {
-          // Empty line
-          yPosition += 2;
+          y += 2.5;
         }
       });
 
       doc.save(filename);
-    } catch (err) {
-      // Fallback to text download
+    } catch {
       const element = document.createElement("a");
       const file = new Blob([content], { type: "text/plain" });
       element.href = URL.createObjectURL(file);
@@ -184,185 +242,218 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
     }
   };
 
+  const inputClass =
+    "w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-400 focus:border-transparent outline-none text-sm transition-all placeholder:text-gray-400";
+
+  const sectionClass = "bg-gray-50/60 rounded-2xl border border-gray-100 p-6 space-y-4";
+
+  const sectionHeader = (step: string, title: string) => (
+    <div className="flex items-center gap-3 mb-1">
+      <span className="w-6 h-6 rounded-full bg-primary-500 text-white flex items-center justify-center text-xs font-bold flex-shrink-0">
+        {step}
+      </span>
+      <h3 className="text-base font-bold text-gray-800">{title}</h3>
+    </div>
+  );
+
   return (
-    <div className="p-8">
-      <h2 className="text-2xl font-bold text-gray-900 mb-6">Tailor Your Resume</h2>
+    <div className="p-6 md:p-8">
+      <div className="mb-6">
+        <h2 className="text-2xl font-extrabold text-gray-900 tracking-tight">Tailor Your Resume</h2>
+        <p className="text-sm text-gray-500 mt-1">Upload your resume and paste a job description — we'll craft a tailored resume and cover letter.</p>
+      </div>
 
-      <form onSubmit={handleTailor} className="space-y-6">
-        {/* Resume Input Section */}
-        <div className="border-b border-gray-200 pb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Your Resume</h3>
+      <form onSubmit={handleTailor} className="space-y-4">
+        {/* Section 1 – Resume */}
+        <div className={sectionClass}>
+          {sectionHeader("1", "Your Resume")}
 
-          <div className="space-y-4">
-            {/* File Upload */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Upload Resume (PDF, DOCX, or TXT)
-              </label>
-              <input
-                type="file"
-                onChange={handleFileChange}
-                accept=".pdf,.docx,.txt"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-              />
-              {resumeFile && (
-                <p className="text-sm text-green-600 mt-2">✓ {resumeFile.name} selected</p>
-              )}
-            </div>
-
-            {/* Text Input Alternative */}
-            {!resumeFile && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Or Paste Resume Text
-                </label>
-                <textarea
-                  value={resumeText}
-                  onChange={(e) => setResumeText(e.target.value)}
-                  placeholder="Paste your resume content here..."
-                  rows={6}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
-                />
-              </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-600 mb-1.5">
+              Upload Resume <span className="text-gray-400 font-normal">(PDF, DOCX, or TXT)</span>
+            </label>
+            <input
+              type="file"
+              onChange={handleFileChange}
+              accept=".pdf,.docx,.txt"
+              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-600 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100 cursor-pointer"
+            />
+            {uploading && (
+              <p className="text-xs text-primary-600 mt-2 font-medium">Scanning for profile links…</p>
+            )}
+            {resumeFile && !uploading && (
+              <p className="text-xs text-green-600 mt-2 font-medium">✓ {resumeFile.name} ready</p>
             )}
           </div>
-        </div>
 
-        {/* Profile Links Section */}
-        <div className="border-b border-gray-200 pb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Your Online Profiles</h3>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {!resumeFile && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                LinkedIn Profile
-              </label>
-              <input
-                type="url"
-                value={linkedinUrl}
-                onChange={(e) => setLinkedinUrl(e.target.value)}
-                placeholder="https://linkedin.com/in/yourprofile"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Portfolio Website
-              </label>
-              <input
-                type="url"
-                value={portfolioUrl}
-                onChange={(e) => setPortfolioUrl(e.target.value)}
-                placeholder="https://yourportfolio.com"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                GitHub Profile
-              </label>
-              <input
-                type="url"
-                value={githubUrl}
-                onChange={(e) => setGithubUrl(e.target.value)}
-                placeholder="https://github.com/yourprofile"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Job Details Section */}
-        <div className="border-b border-gray-200 pb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Target Job</h3>
-
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Job Title
-              </label>
-              <input
-                type="text"
-                value={jobTitle}
-                onChange={(e) => setJobTitle(e.target.value)}
-                placeholder="e.g., Senior Software Engineer"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Job Description
+              <label className="block text-sm font-medium text-gray-600 mb-1.5">
+                Or Paste Resume Text
               </label>
               <textarea
-                value={jobDescription}
-                onChange={(e) => setJobDescription(e.target.value)}
-                placeholder="Paste the job description here..."
+                value={resumeText}
+                onChange={(e) => setResumeText(e.target.value)}
+                placeholder="Paste your resume content here..."
                 rows={6}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
-                required
+                className={`${inputClass} resize-none`}
               />
             </div>
+          )}
+        </div>
+
+        {/* Section 2 – Online Profiles */}
+        <div className={sectionClass}>
+          {sectionHeader("2", "Online Profiles")}
+          <p className="text-xs text-gray-500 -mt-2">Automatically extracted from your resume — edit or clear as needed.</p>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {[
+              {
+                label: "LinkedIn",
+                value: linkedinUrl,
+                set: setLinkedinUrl,
+                key: "linkedin" as const,
+                placeholder: "linkedin.com/in/yourprofile",
+              },
+              {
+                label: "Portfolio",
+                value: portfolioUrl,
+                set: setPortfolioUrl,
+                key: "portfolio" as const,
+                placeholder: "yourportfolio.com",
+              },
+              {
+                label: "GitHub",
+                value: githubUrl,
+                set: setGithubUrl,
+                key: "github" as const,
+                placeholder: "github.com/yourhandle",
+              },
+            ].map(({ label, value, set, key, placeholder }) => (
+              <div key={key}>
+                <label className="block text-sm font-medium text-gray-600 mb-1.5 flex items-center gap-1.5">
+                  {label}
+                  {autoDetected[key] && (
+                    <span className="text-xs font-semibold text-primary-700 bg-primary-50 border border-primary-200 px-2 py-0.5 rounded-full">
+                      ✓ Auto-detected
+                    </span>
+                  )}
+                </label>
+                <input
+                  type="text"
+                  value={value}
+                  onChange={(e) => {
+                    set(e.target.value);
+                    setAutoDetected((prev) => ({ ...prev, [key]: false }));
+                  }}
+                  placeholder={placeholder}
+                  className={`${inputClass} ${autoDetected[key] ? "border-primary-300 bg-primary-50/40" : ""}`}
+                />
+              </div>
+            ))}
           </div>
         </div>
 
-        {/* Submit Button */}
+        {/* Section 3 – Target Job */}
+        <div className={sectionClass}>
+          {sectionHeader("3", "Target Job")}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-600 mb-1.5">Job Title</label>
+            <input
+              type="text"
+              value={jobTitle}
+              onChange={(e) => setJobTitle(e.target.value)}
+              placeholder="e.g., Senior Software Engineer"
+              className={inputClass}
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-600 mb-1.5">Job Description</label>
+            <textarea
+              value={jobDescription}
+              onChange={(e) => setJobDescription(e.target.value)}
+              placeholder="Paste the job description here..."
+              rows={7}
+              className={`${inputClass} resize-none`}
+              required
+            />
+          </div>
+        </div>
+
+        {/* Submit */}
         <button
           type="submit"
-          disabled={loading || (!resumeText && !resumeFile)}
-          className="w-full bg-gradient-to-r from-primary-600 to-primary-500 text-white font-semibold py-3 rounded-lg hover:from-primary-700 hover:to-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          disabled={loading || uploading || (!resumeText && !resumeFile)}
+          className="w-full bg-gradient-to-r from-primary-600 to-primary-500 text-white font-bold py-3.5 rounded-xl hover:from-primary-700 hover:to-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm text-base tracking-tight"
         >
-          {loading ? "Tailoring Resume..." : "Generate Tailored Resume"}
+          {loading ? (
+            <span className="flex items-center justify-center gap-2">
+              <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              Tailoring Your Resume…
+            </span>
+          ) : (
+            "Generate Tailored Resume"
+          )}
         </button>
       </form>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mt-6">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl mt-5 text-sm">
           {error}
         </div>
       )}
 
       {/* Results */}
       {tailoredResume && (
-        <div className="mt-8 space-y-6">
-          {/* Tailored Resume */}
-          <div className="border border-gray-200 rounded-lg p-6 bg-gray-50">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Tailored Resume</h3>
-              <button
-                onClick={() => downloadPDF(tailoredResume, "tailored_resume.pdf")}
-                className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 text-sm font-medium transition-colors"
-              >
-                Download as PDF
-              </button>
-            </div>
-            <div className="bg-white p-4 rounded border border-gray-200 max-h-96 overflow-y-auto whitespace-pre-wrap text-sm text-gray-700 font-mono">
-              {tailoredResume}
-            </div>
-          </div>
-
-          {/* Cover Letter */}
+        <div className="mt-8 space-y-5">
+          <ResultCard
+            title="Tailored Resume"
+            content={tailoredResume}
+            onDownload={() => downloadPDF(tailoredResume, "tailored_resume.pdf")}
+          />
           {coverLetter && (
-            <div className="border border-gray-200 rounded-lg p-6 bg-gray-50">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Generated Cover Letter</h3>
-                <button
-                  onClick={() => downloadPDF(coverLetter, "cover_letter.pdf")}
-                  className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 text-sm font-medium transition-colors"
-                >
-                  Download as PDF
-                </button>
-              </div>
-              <div className="bg-white p-4 rounded border border-gray-200 max-h-96 overflow-y-auto whitespace-pre-wrap text-sm text-gray-700">
-                {coverLetter}
-              </div>
-            </div>
+            <ResultCard
+              title="Cover Letter"
+              content={coverLetter}
+              onDownload={() => downloadPDF(coverLetter, "cover_letter.pdf")}
+            />
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function ResultCard({
+  title,
+  content,
+  onDownload,
+}: {
+  title: string;
+  content: string;
+  onDownload: () => void;
+}) {
+  return (
+    <div className="rounded-2xl overflow-hidden border border-gray-100 shadow-sm">
+      <div className="bg-gradient-to-r from-primary-50 to-orange-50/50 border-b border-gray-100 px-6 py-4 flex justify-between items-center">
+        <h3 className="font-bold text-gray-900 text-base">{title}</h3>
+        <button
+          onClick={onDownload}
+          className="px-4 py-1.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 text-sm font-semibold transition-colors shadow-sm"
+        >
+          Download PDF
+        </button>
+      </div>
+      <div className="p-6 bg-white max-h-96 overflow-y-auto whitespace-pre-wrap text-sm text-gray-700 leading-relaxed">
+        {content}
+      </div>
     </div>
   );
 }
