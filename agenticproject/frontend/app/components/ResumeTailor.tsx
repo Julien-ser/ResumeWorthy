@@ -1,28 +1,65 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { jsPDF } from "jspdf";
+import { useAuth, SignInButton } from "@clerk/nextjs";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+interface UsageSummary {
+  tailor_count: number;
+  tailor_limit: number;
+  is_pro: boolean;
+  remaining: number;
+}
 
 interface ResumeTailorProps {
   onResumeTailored: (data: any) => void;
   resumeData: any;
+  onShowPricing: () => void;
 }
 
-export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTailorProps) {
-  const [resumeFile, setResumeFile] = useState<File | null>(null);
-  const [resumeText, setResumeText] = useState("");
+const inputClass =
+  "w-full px-3.5 py-2.5 border border-stone-200 rounded-xl bg-white text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-400 focus:outline-none transition-colors";
+
+const sectionHeader = (n: string, title: string) => (
+  <div className="flex items-center gap-3 mb-5">
+    <span className="text-xs font-mono font-light text-primary-400">{n.padStart(2, "0")}</span>
+    <h3 className="text-[11px] font-semibold text-stone-500 uppercase tracking-widest">{title}</h3>
+  </div>
+);
+
+export default function ResumeTailor({ onResumeTailored, resumeData, onShowPricing }: ResumeTailorProps) {
+  const { isSignedIn, getToken } = useAuth();
+  const [resumeFile, setResumeFile]             = useState<File | null>(null);
+  const [resumeText, setResumeText]             = useState("");
   const [cachedResumeText, setCachedResumeText] = useState("");
-  const [linkedinUrl, setLinkedinUrl] = useState("");
-  const [portfolioUrl, setPortfolioUrl] = useState("");
-  const [githubUrl, setGithubUrl] = useState("");
-  const [autoDetected, setAutoDetected] = useState({ linkedin: false, portfolio: false, github: false });
-  const [jobTitle, setJobTitle] = useState("");
-  const [jobDescription, setJobDescription] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState("");
-  const [tailoredResume, setTailoredResume] = useState("");
-  const [coverLetter, setCoverLetter] = useState("");
+  const [linkedinUrl, setLinkedinUrl]           = useState("");
+  const [portfolioUrl, setPortfolioUrl]         = useState("");
+  const [githubUrl, setGithubUrl]               = useState("");
+  const [autoDetected, setAutoDetected]         = useState({ linkedin: false, portfolio: false, github: false });
+  const [jobTitle, setJobTitle]                 = useState("");
+  const [jobDescription, setJobDescription]     = useState("");
+  const [loading, setLoading]                   = useState(false);
+  const [uploading, setUploading]               = useState(false);
+  const [error, setError]                       = useState("");
+  const [tailoredResume, setTailoredResume]     = useState("");
+  const [coverLetter, setCoverLetter]           = useState("");
+  const [usage, setUsage]                       = useState<UsageSummary | null>(null);
+
+  useEffect(() => {
+    if (isSignedIn) loadUsage();
+  }, [isSignedIn]);
+
+  const loadUsage = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API_URL}/usage`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) setUsage(await res.json());
+    } catch {}
+  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -36,10 +73,7 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
       const formData = new FormData();
       formData.append("file", file);
 
-      const uploadResponse = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/upload-resume`,
-        { method: "POST", body: formData }
-      );
+      const uploadResponse = await fetch(`${API_URL}/upload-resume`, { method: "POST", body: formData });
 
       if (!uploadResponse.ok) {
         let detail = "Failed to upload resume";
@@ -85,34 +119,37 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
       if (resumeFile && !resumeContent) {
         const formData = new FormData();
         formData.append("file", resumeFile);
-        const uploadResponse = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/upload-resume`,
-          { method: "POST", body: formData }
-        );
+        const uploadResponse = await fetch(`${API_URL}/upload-resume`, { method: "POST", body: formData });
         if (!uploadResponse.ok) {
           let detail = "Failed to upload resume";
           try { const d = await uploadResponse.json(); if (d?.detail) detail = String(d.detail); } catch {}
           throw new Error(detail);
         }
-        const uploadData = await uploadResponse.json();
-        resumeContent = uploadData.text;
+        resumeContent = (await uploadResponse.json()).text;
       }
 
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/tailor-resume`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            resume_text: resumeContent,
-            job_description: jobDescription,
-            company_name: jobTitle,
-            linkedin_url: linkedinUrl,
-            portfolio_url: portfolioUrl,
-            github_url: githubUrl,
-          }),
-        }
-      );
+      const token = await getToken();
+      const response = await fetch(`${API_URL}/tailor-resume`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          resume_text: resumeContent,
+          job_description: jobDescription,
+          company_name: jobTitle,
+          linkedin_url: linkedinUrl,
+          portfolio_url: portfolioUrl,
+          github_url: githubUrl,
+        }),
+      });
+
+      if (response.status === 402) {
+        onShowPricing();
+        setLoading(false);
+        return;
+      }
 
       if (!response.ok) {
         let detail = "Failed to tailor resume";
@@ -124,6 +161,7 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
       setTailoredResume(data.tailored_resume || "");
       setCoverLetter(data.cover_letter || "");
       onResumeTailored(data);
+      loadUsage();
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
@@ -263,7 +301,6 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
         if (y + needed > pageHeight - margin) { doc.addPage(); y = margin; }
       };
 
-      // Header row: date left, job title right
       const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
       doc.setFontSize(9);
       doc.setFont("helvetica", "normal");
@@ -306,59 +343,92 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
     }
   };
 
-  const inputClass =
-    "w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-400 focus:border-transparent outline-none text-sm transition-all placeholder:text-gray-400";
-
-  const sectionClass = "bg-gray-50/60 rounded-2xl border border-gray-100 p-6 space-y-4";
-
-  const sectionHeader = (step: string, title: string) => (
-    <div className="flex items-center gap-3 mb-1">
-      <span className="w-6 h-6 rounded-full bg-primary-500 text-white flex items-center justify-center text-xs font-bold flex-shrink-0">
-        {step}
-      </span>
-      <h3 className="text-base font-bold text-gray-800">{title}</h3>
-    </div>
-  );
-
   return (
-    <div className="p-6 md:p-8">
-      <div className="mb-6">
-        <h2 className="text-2xl font-extrabold text-gray-900 tracking-tight">Tailor Your Resume</h2>
-        <p className="text-sm text-gray-500 mt-1">Upload your resume and paste a job description — we'll craft a tailored resume and cover letter.</p>
+    <div>
+      {/* Header */}
+      <div className="px-6 md:px-8 pt-6 pb-5 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-stone-900 tracking-tight">Tailor Your Resume</h2>
+          <p className="text-sm text-stone-500 mt-1">
+            Upload your resume and paste a job description — we&apos;ll craft a tailored resume and cover letter.
+          </p>
+        </div>
+
+        {/* Usage badge */}
+        {isSignedIn && usage && !usage.is_pro && (
+          <div className="flex-shrink-0 text-right">
+            <p className="text-xs text-stone-500">
+              <span className={`font-bold ${usage.remaining === 0 ? "text-red-500" : "text-primary-500"}`}>
+                {usage.remaining}
+              </span>
+              {" "}free tailor{usage.remaining !== 1 ? "s" : ""} left
+            </p>
+            <button
+              type="button"
+              onClick={onShowPricing}
+              className="text-xs text-primary-500 underline underline-offset-2 hover:text-primary-700 mt-0.5 transition-colors"
+            >
+              Upgrade for unlimited
+            </button>
+          </div>
+        )}
+        {isSignedIn && usage?.is_pro && (
+          <span className="flex-shrink-0 text-xs font-semibold text-primary-600 bg-primary-50 border border-primary-100 px-3 py-1 rounded-full">
+            Pro — unlimited
+          </span>
+        )}
+        {!isSignedIn && (
+          <SignInButton mode="modal">
+            <button
+              type="button"
+              className="flex-shrink-0 text-xs font-medium text-stone-500 hover:text-stone-900 border border-stone-200 px-3 py-1.5 rounded-xl hover:border-stone-300 transition-colors"
+            >
+              Sign in to track usage
+            </button>
+          </SignInButton>
+        )}
       </div>
 
-      <form onSubmit={handleTailor} className="space-y-4">
-        {/* Section 1 – Resume */}
-        <div className={sectionClass}>
+      {/* Form — full-width dividers between sections */}
+      <form onSubmit={handleTailor} className="divide-y divide-stone-100 border-t border-stone-100">
+
+        {/* Section 1 — Resume */}
+        <div className="px-6 md:px-8 py-6 space-y-4">
           {sectionHeader("1", "Your Resume")}
 
           <div>
-            <label className="block text-sm font-medium text-gray-600 mb-1.5">
-              Upload Resume <span className="text-gray-400 font-normal">(PDF, DOCX, or TXT)</span>
+            <label className="block text-sm font-medium text-stone-700 mb-1.5">
+              Upload Resume{" "}
+              <span className="text-stone-400 font-normal">PDF, DOCX, or TXT</span>
             </label>
             <input
               type="file"
               onChange={handleFileChange}
               accept=".pdf,.docx,.txt"
-              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-600 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100 cursor-pointer"
+              className="w-full px-3.5 py-2.5 border border-dashed border-stone-200 rounded-xl text-sm text-stone-600 cursor-pointer hover:border-primary-300 hover:bg-primary-50/20 transition-colors file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-stone-100 file:text-stone-700 hover:file:bg-stone-200"
             />
             {uploading && (
-              <p className="text-xs text-primary-600 mt-2 font-medium">Scanning for profile links…</p>
+              <p className="text-xs text-primary-500 mt-2 font-medium">Scanning for profile links…</p>
             )}
             {resumeFile && !uploading && (
-              <p className="text-xs text-green-600 mt-2 font-medium">✓ {resumeFile.name} ready</p>
+              <p className="text-xs text-emerald-600 mt-2 font-medium flex items-center gap-1.5">
+                <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                {resumeFile.name} ready
+              </p>
             )}
           </div>
 
           {!resumeFile && (
             <div>
-              <label className="block text-sm font-medium text-gray-600 mb-1.5">
-                Or Paste Resume Text
+              <label className="block text-sm font-medium text-stone-700 mb-1.5">
+                Or paste resume text
               </label>
               <textarea
                 value={resumeText}
                 onChange={(e) => setResumeText(e.target.value)}
-                placeholder="Paste your resume content here..."
+                placeholder="Paste your resume content here…"
                 rows={6}
                 className={`${inputClass} resize-none`}
               />
@@ -366,41 +436,28 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
           )}
         </div>
 
-        {/* Section 2 – Online Profiles */}
-        <div className={sectionClass}>
+        {/* Section 2 — Online Profiles */}
+        <div className="px-6 md:px-8 py-6 space-y-4">
           {sectionHeader("2", "Online Profiles")}
-          <p className="text-xs text-gray-500 -mt-2">Automatically extracted from your resume — edit or clear as needed.</p>
+          <p className="text-xs text-stone-400 -mt-3">
+            Automatically extracted from your resume — edit or clear as needed.
+          </p>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {[
-              {
-                label: "LinkedIn",
-                value: linkedinUrl,
-                set: setLinkedinUrl,
-                key: "linkedin" as const,
-                placeholder: "linkedin.com/in/yourprofile",
-              },
-              {
-                label: "Portfolio",
-                value: portfolioUrl,
-                set: setPortfolioUrl,
-                key: "portfolio" as const,
-                placeholder: "yourportfolio.com",
-              },
-              {
-                label: "GitHub",
-                value: githubUrl,
-                set: setGithubUrl,
-                key: "github" as const,
-                placeholder: "github.com/yourhandle",
-              },
-            ].map(({ label, value, set, key, placeholder }) => (
+            {([
+              { label: "LinkedIn",  value: linkedinUrl,  set: setLinkedinUrl,  key: "linkedin"  as const, placeholder: "linkedin.com/in/yourprofile" },
+              { label: "Portfolio", value: portfolioUrl, set: setPortfolioUrl, key: "portfolio" as const, placeholder: "yourportfolio.com"            },
+              { label: "GitHub",    value: githubUrl,    set: setGithubUrl,    key: "github"    as const, placeholder: "github.com/yourhandle"       },
+            ]).map(({ label, value, set, key, placeholder }) => (
               <div key={key}>
-                <label className="block text-sm font-medium text-gray-600 mb-1.5 flex items-center gap-1.5">
+                <label className="text-sm font-medium text-stone-700 mb-1.5 flex items-center gap-1.5">
                   {label}
                   {autoDetected[key] && (
-                    <span className="text-xs font-semibold text-primary-700 bg-primary-50 border border-primary-200 px-2 py-0.5 rounded-full">
-                      ✓ Auto-detected
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary-600 bg-primary-50 border border-primary-100 px-2 py-0.5 rounded-full">
+                      <svg className="w-2.5 h-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2 6l3 3 5-5" />
+                      </svg>
+                      Auto-detected
                     </span>
                   )}
                 </label>
@@ -412,19 +469,19 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
                     setAutoDetected((prev) => ({ ...prev, [key]: false }));
                   }}
                   placeholder={placeholder}
-                  className={`${inputClass} ${autoDetected[key] ? "border-primary-300 bg-primary-50/40" : ""}`}
+                  className={`${inputClass} ${autoDetected[key] ? "border-primary-200 bg-primary-50/30" : ""}`}
                 />
               </div>
             ))}
           </div>
         </div>
 
-        {/* Section 3 – Target Job */}
-        <div className={sectionClass}>
+        {/* Section 3 — Target Job */}
+        <div className="px-6 md:px-8 py-6 space-y-4">
           {sectionHeader("3", "Target Job")}
 
           <div>
-            <label className="block text-sm font-medium text-gray-600 mb-1.5">Job Title</label>
+            <label className="block text-sm font-medium text-stone-700 mb-1.5">Job Title</label>
             <input
               type="text"
               value={jobTitle}
@@ -436,11 +493,11 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-600 mb-1.5">Job Description</label>
+            <label className="block text-sm font-medium text-stone-700 mb-1.5">Job Description</label>
             <textarea
               value={jobDescription}
               onChange={(e) => setJobDescription(e.target.value)}
-              placeholder="Paste the job description here..."
+              placeholder="Paste the job description here…"
               rows={7}
               className={`${inputClass} resize-none`}
               required
@@ -449,34 +506,39 @@ export default function ResumeTailor({ onResumeTailored, resumeData }: ResumeTai
         </div>
 
         {/* Submit */}
-        <button
-          type="submit"
-          disabled={loading || uploading || (!resumeText && !resumeFile)}
-          className="w-full bg-gradient-to-r from-primary-600 to-primary-500 text-white font-bold py-3.5 rounded-xl hover:from-primary-700 hover:to-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm text-base tracking-tight"
-        >
-          {loading ? (
-            <span className="flex items-center justify-center gap-2">
-              <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-              </svg>
-              Tailoring Your Resume…
-            </span>
-          ) : (
-            "Generate Tailored Resume"
-          )}
-        </button>
+        <div className="px-6 md:px-8 py-6">
+          <button
+            type="submit"
+            disabled={loading || uploading || (!resumeText && !resumeFile)}
+            className="w-full bg-primary-500 hover:bg-primary-600 active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-all duration-150 text-sm"
+          >
+            {loading ? (
+              <span className="flex items-center justify-center gap-2">
+                <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                Tailoring your resume…
+              </span>
+            ) : (
+              "Generate Tailored Resume"
+            )}
+          </button>
+        </div>
       </form>
 
+      {/* Error */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl mt-5 text-sm">
-          {error}
+        <div className="border-t border-stone-100 px-6 md:px-8 pt-4 pb-4">
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+            {error}
+          </div>
         </div>
       )}
 
       {/* Results */}
       {tailoredResume && (
-        <div className="mt-8 space-y-5">
+        <div className="border-t border-stone-100 px-6 md:px-8 pt-6 pb-7 space-y-4">
           <ResultCard
             title="Tailored Resume"
             content={tailoredResume}
@@ -505,17 +567,17 @@ function ResultCard({
   onDownload: () => void;
 }) {
   return (
-    <div className="rounded-2xl overflow-hidden border border-gray-100 shadow-sm">
-      <div className="bg-gradient-to-r from-primary-50 to-orange-50/50 border-b border-gray-100 px-6 py-4 flex justify-between items-center">
-        <h3 className="font-bold text-gray-900 text-base">{title}</h3>
+    <div className="border border-stone-100 rounded-2xl overflow-hidden">
+      <div className="px-5 py-4 flex justify-between items-center border-b border-stone-100 bg-stone-50/60">
+        <h3 className="text-[11px] font-semibold text-stone-500 uppercase tracking-widest">{title}</h3>
         <button
           onClick={onDownload}
-          className="px-4 py-1.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 text-sm font-semibold transition-colors shadow-sm"
+          className="text-xs font-semibold text-white bg-stone-900 hover:bg-stone-700 active:scale-[0.97] px-3.5 py-1.5 rounded-xl transition-all duration-150"
         >
           Download PDF
         </button>
       </div>
-      <div className="p-6 bg-white max-h-96 overflow-y-auto whitespace-pre-wrap text-sm text-gray-700 leading-relaxed">
+      <div className="px-5 py-4 max-h-80 overflow-y-auto whitespace-pre-wrap text-xs text-stone-700 leading-relaxed font-mono bg-white">
         {content}
       </div>
     </div>

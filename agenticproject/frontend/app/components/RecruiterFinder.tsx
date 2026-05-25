@@ -16,14 +16,22 @@ interface RecruiterFinderProps {
 }
 
 const inputClass =
-  "w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-400 focus:border-transparent outline-none text-sm transition-all placeholder:text-gray-400 bg-white";
+  "w-full px-3.5 py-2.5 border border-stone-200 rounded-xl bg-white text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-400 focus:outline-none transition-colors";
+
+const OUTREACH_TIPS = [
+  "Personalize your message referencing their recent activity or posts",
+  "Mention mutual connections or companies you have both worked at",
+  "Keep the initial message under 50 words — just request a 15-min call",
+  "Send on Tuesday through Thursday, 10am to 3pm for best response rates",
+  "Include a link to your tailored resume or portfolio",
+];
 
 export default function RecruiterFinder({ onRecruitersFound, recruiterData }: RecruiterFinderProps) {
   const [companyName, setCompanyName] = useState("");
-  const [jobTitle, setJobTitle] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [recruiters, setRecruiters] = useState<Recruiter[]>([]);
+  const [jobTitle, setJobTitle]       = useState("");
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState("");
+  const [recruiters, setRecruiters]   = useState<Recruiter[]>([]);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,49 +65,55 @@ export default function RecruiterFinder({ onRecruitersFound, recruiterData }: Re
   };
 
   return (
-    <div className="p-6 md:p-8">
+    <div className="px-6 md:px-8 py-6 md:py-7">
+
+      {/* Section heading */}
       <div className="mb-6">
-        <h2 className="text-2xl font-extrabold text-gray-900 tracking-tight">Find Recruiters</h2>
-        <p className="text-sm text-gray-500 mt-1">Locate hiring managers and recruiters at your target companies.</p>
+        <h2 className="text-xl font-bold text-stone-900 tracking-tight">Find Recruiters</h2>
+        <p className="text-sm text-stone-500 mt-1">
+          Locate hiring managers and recruiters at your target companies.
+        </p>
       </div>
 
+      {/* Form */}
       <form onSubmit={handleSearch} className="space-y-4 mb-8">
-        <div className="bg-gray-50/60 rounded-2xl border border-gray-100 p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-600 mb-1.5">Company Name</label>
-              <input
-                type="text"
-                value={companyName}
-                onChange={(e) => setCompanyName(e.target.value)}
-                placeholder="e.g., Google, Microsoft, Figma"
-                className={inputClass}
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-600 mb-1.5">
-                Job Title <span className="text-gray-400 font-normal">(optional)</span>
-              </label>
-              <input
-                type="text"
-                value={jobTitle}
-                onChange={(e) => setJobTitle(e.target.value)}
-                placeholder="e.g., Software Engineer, Product Manager"
-                className={inputClass}
-              />
-            </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-[11px] font-semibold text-stone-500 uppercase tracking-widest mb-1.5">
+              Company Name
+            </label>
+            <input
+              type="text"
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              placeholder="Google, Figma, Shopify…"
+              className={inputClass}
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold text-stone-500 uppercase tracking-widest mb-1.5">
+              Job Title{" "}
+              <span className="normal-case font-normal text-stone-400">optional</span>
+            </label>
+            <input
+              type="text"
+              value={jobTitle}
+              onChange={(e) => setJobTitle(e.target.value)}
+              placeholder="Software Engineer, Product Manager…"
+              className={inputClass}
+            />
           </div>
         </div>
 
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-gradient-to-r from-primary-600 to-primary-500 text-white font-bold py-3.5 rounded-xl hover:from-primary-700 hover:to-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm text-base tracking-tight"
+          className="w-full bg-primary-500 hover:bg-primary-600 active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-all duration-150 text-sm"
         >
           {loading ? (
             <span className="flex items-center justify-center gap-2">
-              <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
               </svg>
@@ -111,32 +125,32 @@ export default function RecruiterFinder({ onRecruitersFound, recruiterData }: Re
         </button>
       </form>
 
+      {/* Error */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm mb-6">
           {error}
         </div>
       )}
 
+      {/* Results */}
       {recruiters.length > 0 && (
         <div className="space-y-6">
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+          <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-widest">
             {recruiters.length} recruiter{recruiters.length !== 1 ? "s" : ""} found
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Recruiter list */}
+          <div className="divide-y divide-stone-100">
             {recruiters.map((recruiter, idx) => (
-              <div
-                key={idx}
-                className="group border border-gray-100 rounded-2xl p-5 hover:shadow-md hover:border-primary-100 transition-all bg-white"
-              >
-                <div className="mb-3">
-                  <h4 className="font-bold text-gray-900 text-base">{recruiter.name}</h4>
-                  <p className="text-sm font-semibold text-primary-600 mt-0.5">{recruiter.title}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">at {recruiter.company}</p>
+              <div key={idx} className="py-4 first:pt-0">
+                <div className="mb-2">
+                  <h4 className="font-semibold text-stone-900 text-sm">{recruiter.name}</h4>
+                  <p className="text-sm text-primary-500 font-medium mt-0.5">{recruiter.title}</p>
+                  <p className="text-xs text-stone-400 mt-0.5">{recruiter.company}</p>
                 </div>
 
                 {recruiter.connection_strategy && (
-                  <p className="mb-3 bg-amber-50 px-3 py-2 rounded-xl text-xs text-amber-800 border border-amber-100 font-medium">
+                  <p className="mb-3 text-xs text-stone-500 bg-stone-50 px-3 py-2.5 rounded-xl italic leading-relaxed">
                     {recruiter.connection_strategy}
                   </p>
                 )}
@@ -146,29 +160,42 @@ export default function RecruiterFinder({ onRecruitersFound, recruiterData }: Re
                     href={recruiter.linkedin_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-600 bg-primary-50 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition-colors border border-primary-100"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-600 hover:text-primary-700 transition-colors group"
                   >
                     LinkedIn Profile
-                    <span className="group-hover:translate-x-0.5 transition-transform inline-block">→</span>
+                    <svg
+                      className="w-3 h-3 group-hover:translate-x-0.5 transition-transform duration-150"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2.5}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                    </svg>
                   </a>
                 )}
               </div>
             ))}
           </div>
 
-          <div className="bg-amber-50 border border-amber-100 rounded-2xl p-6">
-            <h4 className="text-xs font-bold text-amber-900 uppercase tracking-widest mb-3">Outreach Tips</h4>
-            <ul className="space-y-2 text-sm text-amber-800">
-              {[
-                "Personalize your message referencing their recent activity or posts",
-                "Mention mutual connections or companies you've both worked at",
-                "Keep initial message under 50 words — just request a 15-min call",
-                "Send on Tuesday–Thursday, 10am–3pm for best response rates",
-                "Include a link to your tailored resume or portfolio",
-              ].map((tip, i) => (
-                <li key={i} className="flex items-start gap-2">
-                  <span className="text-amber-500 font-bold flex-shrink-0 mt-0.5">✓</span>
-                  {tip}
+          {/* Outreach tips */}
+          <div className="border-t border-stone-100 pt-6">
+            <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-widest mb-4">
+              Outreach Tips
+            </p>
+            <ul className="space-y-2.5">
+              {OUTREACH_TIPS.map((tip, i) => (
+                <li key={i} className="flex items-start gap-2.5">
+                  <svg
+                    className="w-3.5 h-3.5 text-primary-400 flex-shrink-0 mt-0.5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2.5}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span className="text-xs text-stone-600 leading-relaxed">{tip}</span>
                 </li>
               ))}
             </ul>
@@ -176,10 +203,11 @@ export default function RecruiterFinder({ onRecruitersFound, recruiterData }: Re
         </div>
       )}
 
+      {/* Empty state */}
       {!loading && recruiters.length === 0 && companyName && (
-        <div className="text-center py-16 text-gray-400">
-          <p className="font-semibold">No recruiters found.</p>
-          <p className="text-sm mt-1">Try a different company name or check LinkedIn directly.</p>
+        <div className="text-center py-16">
+          <p className="font-medium text-sm text-stone-500">No recruiters found</p>
+          <p className="text-xs mt-1 text-stone-400">Try a different company name or check LinkedIn directly.</p>
         </div>
       )}
     </div>

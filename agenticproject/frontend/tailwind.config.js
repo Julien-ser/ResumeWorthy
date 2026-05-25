@@ -6,11 +6,11 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["var(--font-jakarta)", "ui-sans-serif", "system-ui", "sans-serif"],
+        sans: ["var(--font-outfit)", "ui-sans-serif", "system-ui", "sans-serif"],
       },
       colors: {
         primary: {
-          50: "#FEF5F2",
+          50:  "#FEF5F2",
           100: "#FDEBE5",
           200: "#F5A9A1",
           300: "#F08B7F",

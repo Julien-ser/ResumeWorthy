@@ -1,85 +1,130 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Header from "@/components/Header";
 import JobSearch from "@/components/JobSearch";
 import ResumeTailor from "@/components/ResumeTailor";
 import RecruiterFinder from "@/components/RecruiterFinder";
+import PricingModal from "@/components/PricingModal";
 
 const TABS = [
-  { id: "search", label: "Job Search" },
-  { id: "tailor", label: "Resume Tailor" },
+  { id: "search",     label: "Job Search"      },
+  { id: "tailor",     label: "Resume Tailor"   },
   { id: "recruiters", label: "Find Recruiters" },
 ] as const;
 
 type Tab = (typeof TABS)[number]["id"];
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<Tab>("search");
-  const [jobData, setJobData] = useState(null);
-  const [resumeData, setResumeData] = useState(null);
+  const [activeTab, setActiveTab]       = useState<Tab>("search");
+  const [jobData, setJobData]           = useState(null);
+  const [resumeData, setResumeData]     = useState(null);
   const [recruiterData, setRecruiterData] = useState(null);
+  const [pricingOpen, setPricingOpen]   = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("upgraded") === "true") {
+      window.history.replaceState({}, "", "/");
+    }
+    if (params.get("cancelled") === "true") {
+      setPricingOpen(true);
+      window.history.replaceState({}, "", "/");
+    }
+  }, []);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-primary-50/30">
-      <Header />
+    <div className="min-h-screen bg-stone-50">
+      <Header onUpgrade={() => setPricingOpen(true)} />
 
-      <main className="container mx-auto px-4 py-8 max-w-5xl">
-        {/* Pill Tab Navigation */}
-        <div className="flex gap-1 mb-6 bg-gray-100/80 p-1 rounded-2xl backdrop-blur-sm">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${
-                activeTab === tab.id
-                  ? "bg-white text-primary-700 shadow-sm"
-                  : "text-gray-500 hover:text-gray-800"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+      <main className="container mx-auto px-4 py-8 max-w-4xl">
 
-        {/* Tab Content */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        {/* Unified card: tab bar + content */}
+        <div className="bg-white rounded-2xl border border-stone-200/70 shadow-[0_1px_4px_0_rgb(0,0,0,0.04)] overflow-hidden">
+
+          {/* Tab bar */}
+          <div className="flex border-b border-stone-100">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`relative px-6 py-4 text-sm font-medium transition-colors ${
+                  activeTab === tab.id
+                    ? "text-stone-900"
+                    : "text-stone-400 hover:text-stone-700"
+                }`}
+              >
+                {tab.label}
+                {/* Underline indicator — fades in/out */}
+                <span
+                  className={`absolute bottom-0 left-4 right-4 h-[2px] bg-primary-500 rounded-full transition-opacity duration-200 ${
+                    activeTab === tab.id ? "opacity-100" : "opacity-0"
+                  }`}
+                />
+              </button>
+            ))}
+          </div>
+
+          {/* Tab content */}
           {activeTab === "search" && (
             <JobSearch onJobsFound={setJobData} jobData={jobData} />
           )}
           {activeTab === "tailor" && (
-            <ResumeTailor onResumeTailored={setResumeData} resumeData={resumeData} />
+            <ResumeTailor
+              onResumeTailored={setResumeData}
+              resumeData={resumeData}
+              onShowPricing={() => setPricingOpen(true)}
+            />
           )}
           {activeTab === "recruiters" && (
             <RecruiterFinder onRecruitersFound={setRecruiterData} recruiterData={recruiterData} />
           )}
         </div>
 
-        {/* How to Use */}
-        <div className="mt-8 bg-gradient-to-r from-primary-50 to-orange-50 border border-primary-100 rounded-2xl p-6">
-          <h2 className="text-sm font-bold text-primary-800 uppercase tracking-widest mb-3">How to Use</h2>
-          <ol className="space-y-2 text-sm text-primary-900">
-            <li className="flex items-start gap-3">
-              <span className="w-5 h-5 rounded-full bg-primary-500 text-white flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">1</span>
-              <span><strong>Search jobs</strong> using keywords and location to find relevant openings</span>
-            </li>
-            <li className="flex items-start gap-3">
-              <span className="w-5 h-5 rounded-full bg-primary-500 text-white flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
-              <span><strong>Tailor your resume</strong> for a specific role — upload your PDF and get a tailored resume + cover letter</span>
-            </li>
-            <li className="flex items-start gap-3">
-              <span className="w-5 h-5 rounded-full bg-primary-500 text-white flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">3</span>
-              <span><strong>Find recruiters</strong> at target companies for direct outreach</span>
-            </li>
-          </ol>
+        {/* How it works */}
+        <div className="mt-10 border-t border-stone-100 pt-8">
+          <p className="text-[10px] font-semibold tracking-widest text-stone-400 uppercase mb-6">
+            How it works
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {([
+              {
+                n: "01",
+                title: "Search Jobs",
+                body: "Find relevant openings using keywords and location across the web.",
+              },
+              {
+                n: "02",
+                title: "Tailor Your Resume",
+                body: "Upload your PDF and get a tailored resume plus cover letter in seconds.",
+              },
+              {
+                n: "03",
+                title: "Find Recruiters",
+                body: "Locate hiring managers at target companies for direct outreach.",
+              },
+            ] as const).map((s) => (
+              <div key={s.n} className="flex gap-4">
+                <span className="text-xl font-light font-mono text-primary-300 flex-shrink-0 leading-none mt-0.5">
+                  {s.n}
+                </span>
+                <div>
+                  <p className="text-sm font-semibold text-stone-900 mb-1">{s.title}</p>
+                  <p className="text-xs text-stone-500 leading-relaxed">{s.body}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </main>
 
-      <footer className="border-t border-gray-100 mt-12 py-6">
-        <div className="container mx-auto px-4 text-center text-gray-400 text-xs font-medium">
+      <footer className="border-t border-stone-100 mt-16 py-6">
+        <div className="container mx-auto px-4 text-center text-stone-400 text-xs">
           ResumeWorthy &bull; Job Search &amp; Resume Optimization
         </div>
       </footer>
+
+      <PricingModal open={pricingOpen} onClose={() => setPricingOpen(false)} />
     </div>
   );
 }

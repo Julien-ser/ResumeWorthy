@@ -12,3 +12,7 @@ beautifulsoup4==4.14.3
 lxml==6.0.2
 PyMuPDF
 pydantic==2.12.5
+httpx==0.28.1
+stripe==12.0.0
+PyJWT[crypto]>=2.4.0
+sentry-sdk[fastapi]>=2.0.0
