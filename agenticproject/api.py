@@ -21,8 +21,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
+from llm_fallback import ainvoke_with_fallback
 from ddgs import DDGS
 from pydantic import BaseModel
 from urllib.parse import urlparse
@@ -208,19 +208,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ==================== LLM ====================
-def get_llm():
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY not set")
-    return ChatOpenAI(
-        model="minimax/minimax-m2.5:free",
-        api_key=api_key,
-        base_url="https://openrouter.ai/api/v1",
-        temperature=0.2,
-    )
-
 
 # ==================== DuckDuckGo tool (recruiter finder only) ====================
 @tool
@@ -619,8 +606,6 @@ async def tailor_resume(
             )
 
     try:
-        llm = get_llm()
-
         async def safe_thread(fn, arg):
             try:
                 return await asyncio.to_thread(fn, arg)
@@ -673,19 +658,15 @@ async def tailor_resume(
         )
 
         try:
-            resume_response, letter_response = await asyncio.gather(
-                llm.ainvoke([HumanMessage(content=resume_prompt)]),
-                llm.ainvoke([HumanMessage(content=letter_prompt)]),
+            resume_text_raw, letter_text_raw = await asyncio.gather(
+                ainvoke_with_fallback([HumanMessage(content=resume_prompt)], max_tokens=2000),
+                ainvoke_with_fallback([HumanMessage(content=letter_prompt)], max_tokens=800),
             )
         except Exception as llm_err:
             raise HTTPException(status_code=502, detail=f"LLM API error: {llm_err}")
 
-        tailored_resume = clean_dashes(
-            resume_response.content if hasattr(resume_response, "content") else str(resume_response)
-        )
-        cover_letter = clean_dashes(
-            letter_response.content if hasattr(letter_response, "content") else str(letter_response)
-        )
+        tailored_resume = clean_dashes(resume_text_raw)
+        cover_letter = clean_dashes(letter_text_raw)
 
         # Only count after a successful generation
         if user_id is not None:
