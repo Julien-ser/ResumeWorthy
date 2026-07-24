@@ -37,7 +37,17 @@ def _find_engine() -> str:
     )
 
 
-async def compile_tex_to_pdf(tex_source: str, timeout: float = 30.0) -> bytes:
+async def compile_tex_to_pdf(tex_source: str, timeout: float = 90.0) -> bytes:
+    """timeout defaults to 90s, not the ~2-5s a warm compile actually takes:
+    tectonic downloads its LaTeX format + every package/font/hyphenation
+    file used on first invocation in a fresh container (confirmed live in
+    a real Docker build 2026-07-24 -- ~180 files just for babel's default
+    hyphenation set, plus fontawesome5's font files, took ~20-40s cold).
+    That download is cached for the container's lifetime after the first
+    compile, but a too-short timeout here kills the process mid-download
+    (asyncio.TimeoutError -> proc.kill()) and leaves a CORRUPTED partial
+    cache that then fails fast on every subsequent compile too -- so this
+    number errs generous rather than risk that failure mode."""
     engine = _find_engine()
 
     with tempfile.TemporaryDirectory(prefix="resumeworthy-tex-") as tmpdir:

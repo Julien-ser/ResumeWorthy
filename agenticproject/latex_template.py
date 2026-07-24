@@ -112,7 +112,6 @@ _PREAMBLE = r"""\documentclass[letterpaper,11pt]{article}
 \usepackage[english]{babel}
 \usepackage{tabularx}
 \usepackage{comment}
-\usepackage{fontawesome5}
 \usepackage[hidelinks]{hyperref}
 
 \pagestyle{fancy}
@@ -173,15 +172,21 @@ def blocks_to_tex(
     name = escape_latex(header.get("name", "")) or "Your Name"
     email = escape_latex(header.get("email", ""))
 
+    # No icon font (fontawesome5) -- confirmed live in a real Docker build
+    # (2026-07-24) that tectonic crashes with a native "free(): invalid
+    # pointer" while loading FontAwesome5Free-Solid-900.otf in this
+    # container environment (isolated: every other package in this
+    # preamble compiles cleanly, only fontawesome5 triggers it). Plain-text
+    # labels trade a cosmetic icon for a PDF that actually renders.
     contact_parts = []
     if email:
-        contact_parts.append(f"\\href{{mailto:{header.get('email', '')}}}{{\\faEnvelope\\ {email}}}")
+        contact_parts.append(f"\\href{{mailto:{header.get('email', '')}}}{{{email}}}")
     if linkedin_url:
-        contact_parts.append(f"\\href{{{linkedin_url}}}{{\\faLinkedin\\ LinkedIn}}")
+        contact_parts.append(f"\\href{{{linkedin_url}}}{{LinkedIn}}")
     if github_url:
-        contact_parts.append(f"\\href{{{github_url}}}{{\\faGithub\\ GitHub}}")
+        contact_parts.append(f"\\href{{{github_url}}}{{GitHub}}")
     if portfolio_url:
-        contact_parts.append(f"\\href{{{portfolio_url}}}{{\\faGlobe\\ Portfolio}}")
+        contact_parts.append(f"\\href{{{portfolio_url}}}{{Portfolio}}")
     contact_line = " $|$\n    ".join(contact_parts)
 
     summary_block = ""
