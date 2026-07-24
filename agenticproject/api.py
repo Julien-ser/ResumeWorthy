@@ -4,6 +4,7 @@ ResumeWorthy Job Application + Recruiter Finder Backend API
 
 import os
 import re
+import json
 import asyncio
 import sqlite3
 import io
@@ -20,9 +21,11 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from llm_fallback import ainvoke_with_fallback
+from resume_blocks import extract_resume_entries, generate_entry_blocks, regenerate_block
 from ddgs import DDGS
 from pydantic import BaseModel
 from urllib.parse import urlparse
@@ -590,13 +593,50 @@ async def _search_jobs_ddgs(request: JobSearchRequest) -> JobSearchResponse:
     return JobSearchResponse(jobs=raw_jobs, count=len(raw_jobs))
 
 
-@app.post("/tailor-resume", response_model=ResumeTailorResponse)
-async def tailor_resume(
-    request: ResumeTailorRequest,
-    authorization: Optional[str] = Header(default=None),
-):
-    # Auth + usage gate
-    user_id = verify_clerk_token(authorization)
+async def _safe_thread(fn, arg):
+    try:
+        return await asyncio.to_thread(fn, arg)
+    except Exception:
+        return ""
+
+
+async def _gather_candidate_context(request: ResumeTailorRequest) -> str:
+    async def noop():
+        return ""
+
+    linkedin_info, github_info, portfolio_info = await asyncio.gather(
+        _safe_thread(extract_linkedin_info, request.linkedin_url) if request.linkedin_url else noop(),
+        _safe_thread(extract_github_info, request.github_url) if request.github_url else noop(),
+        _safe_thread(extract_portfolio_info, request.portfolio_url) if request.portfolio_url else noop(),
+    )
+
+    context_parts = [f"Original Resume:\n{request.resume_text[:2500]}"]
+    if linkedin_info:
+        context_parts.append(f"LinkedIn Profile Info:\n{linkedin_info[:500]}")
+    if github_info:
+        context_parts.append(f"GitHub Profile Info:\n{github_info[:500]}")
+    if portfolio_info:
+        context_parts.append(f"Portfolio Info:\n{portfolio_info[:300]}")
+    return "\n\n".join(context_parts)
+
+
+def _build_letter_prompt(request: ResumeTailorRequest, candidate_context: str) -> str:
+    return (
+        f"Write a compelling cover letter (150-200 words) for this position.\n\n"
+        f"Company: {request.company_name}\n"
+        f"Job Description: {request.job_description[:1500]}\n\n"
+        f"Candidate Profile:\n{candidate_context}\n\n"
+        f"Requirements:\n"
+        f"1. Reference specific skills/projects from their GitHub or portfolio\n"
+        f"2. Show enthusiasm and understanding of the role\n"
+        f"3. Include 1-2 specific examples of relevant work\n"
+        f"4. Use hyphens instead of dashes\n"
+        f"5. Professional tone, ready to copy/paste\n\n"
+        f"Make it personal and specific to this opportunity."
+    )
+
+
+def _check_tailor_usage_gate(user_id: Optional[str]):
     if user_id is not None:
         usage = get_user_usage(user_id)
         if not usage["is_pro"] and usage["tailor_count"] >= FREE_TAILOR_LIMIT:
@@ -605,30 +645,17 @@ async def tailor_resume(
                 detail=f"You've used all {FREE_TAILOR_LIMIT} free tailors this month. Upgrade to Pro for unlimited access.",
             )
 
+
+@app.post("/tailor-resume", response_model=ResumeTailorResponse)
+async def tailor_resume(
+    request: ResumeTailorRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    user_id = verify_clerk_token(authorization)
+    _check_tailor_usage_gate(user_id)
+
     try:
-        async def safe_thread(fn, arg):
-            try:
-                return await asyncio.to_thread(fn, arg)
-            except Exception:
-                return ""
-
-        async def noop():
-            return ""
-
-        linkedin_info, github_info, portfolio_info = await asyncio.gather(
-            safe_thread(extract_linkedin_info, request.linkedin_url) if request.linkedin_url else noop(),
-            safe_thread(extract_github_info, request.github_url) if request.github_url else noop(),
-            safe_thread(extract_portfolio_info, request.portfolio_url) if request.portfolio_url else noop(),
-        )
-
-        context_parts = [f"Original Resume:\n{request.resume_text[:2500]}"]
-        if linkedin_info:
-            context_parts.append(f"LinkedIn Profile Info:\n{linkedin_info[:500]}")
-        if github_info:
-            context_parts.append(f"GitHub Profile Info:\n{github_info[:500]}")
-        if portfolio_info:
-            context_parts.append(f"Portfolio Info:\n{portfolio_info[:300]}")
-        candidate_context = "\n\n".join(context_parts)
+        candidate_context = await _gather_candidate_context(request)
 
         resume_prompt = (
             f"You are an expert resume writer specializing in ATS-optimized resumes.\n\n"
@@ -642,20 +669,7 @@ async def tailor_resume(
             f"5. Uses hyphens instead of dashes\n\n"
             f"Make it concise, impactful, and specific to this role."
         )
-
-        letter_prompt = (
-            f"Write a compelling cover letter (150-200 words) for this position.\n\n"
-            f"Company: {request.company_name}\n"
-            f"Job Description: {request.job_description[:1500]}\n\n"
-            f"Candidate Profile:\n{candidate_context}\n\n"
-            f"Requirements:\n"
-            f"1. Reference specific skills/projects from their GitHub or portfolio\n"
-            f"2. Show enthusiasm and understanding of the role\n"
-            f"3. Include 1-2 specific examples of relevant work\n"
-            f"4. Use hyphens instead of dashes\n"
-            f"5. Professional tone, ready to copy/paste\n\n"
-            f"Make it personal and specific to this opportunity."
-        )
+        letter_prompt = _build_letter_prompt(request, candidate_context)
 
         try:
             resume_text_raw, letter_text_raw = await asyncio.gather(
@@ -668,7 +682,6 @@ async def tailor_resume(
         tailored_resume = clean_dashes(resume_text_raw)
         cover_letter = clean_dashes(letter_text_raw)
 
-        # Only count after a successful generation
         if user_id is not None:
             increment_tailor_count(user_id)
 
@@ -678,6 +691,119 @@ async def tailor_resume(
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/tailor-resume-stream")
+async def tailor_resume_stream(
+    request: ResumeTailorRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    """SSE version of /tailor-resume. Structures the resume into per-entry
+    blocks, tailors each entry concurrently, and streams each block group to
+    the client the moment it resolves (asyncio.as_completed) instead of
+    waiting for the whole resume to finish -- this is what makes blocks
+    appear progressively on the frontend rather than all at once."""
+    user_id = verify_clerk_token(authorization)
+    _check_tailor_usage_gate(user_id)
+
+    async def event_stream():
+        def sse(event: str, data: dict) -> str:
+            return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+        try:
+            candidate_context = await _gather_candidate_context(request)
+            letter_prompt = _build_letter_prompt(request, candidate_context)
+
+            try:
+                entries = await extract_resume_entries(request.resume_text)
+            except Exception as exc:
+                yield sse("error", {"detail": f"Failed to parse resume structure: {exc}"[:300]})
+                return
+
+            if not entries:
+                yield sse("error", {"detail": "Could not find any experience entries to tailor."})
+                return
+
+            yield sse("meta", {
+                "entries": [
+                    {"id": e["id"], "title": e["title"], "company": e["company"],
+                     "dates": e["dates"], "location": e["location"]}
+                    for e in entries
+                ],
+            })
+
+            letter_task = asyncio.create_task(
+                ainvoke_with_fallback([HumanMessage(content=letter_prompt)], max_tokens=800)
+            )
+
+            async def entry_task(entry):
+                blocks = await generate_entry_blocks(entry, request.job_description)
+                return entry["id"], blocks
+
+            pending = {asyncio.create_task(entry_task(e)): e["id"] for e in entries}
+            for coro in asyncio.as_completed(list(pending.keys())):
+                try:
+                    entry_id, blocks = await coro
+                    yield sse("blocks", {
+                        "entry_id": entry_id,
+                        "blocks": [{**b, "chosen": clean_dashes(b["chosen"]),
+                                    "alternates": [clean_dashes(a) for a in b["alternates"]]}
+                                   for b in blocks],
+                    })
+                except Exception as exc:
+                    yield sse("entry_error", {"detail": str(exc)[:200]})
+
+            try:
+                letter_raw = await letter_task
+                yield sse("cover_letter", {"text": clean_dashes(letter_raw)})
+            except Exception as exc:
+                yield sse("entry_error", {"detail": f"Cover letter failed: {exc}"[:200]})
+
+            if user_id is not None:
+                increment_tailor_count(user_id)
+
+            yield sse("done", {})
+        except Exception as exc:
+            yield sse("error", {"detail": str(exc)[:300]})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+class RegenerateBlockRequest(BaseModel):
+    section_title: str
+    original_text: str
+    current_text: str = ""
+    job_description: str
+
+
+class RegenerateBlockResponse(BaseModel):
+    chosen: str
+    alternates: List[str]
+    score: float
+
+
+@app.post("/regenerate-block", response_model=RegenerateBlockResponse)
+async def regenerate_block_endpoint(
+    request: RegenerateBlockRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Regenerate a single block. Does not touch the free-tailor usage
+    counter -- this is a refinement of an already-generated resume, not a
+    new tailor."""
+    verify_clerk_token(authorization)
+    try:
+        result = await regenerate_block(
+            request.section_title, request.original_text,
+            request.current_text, request.job_description,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LLM API error: {e}")
+
+    return RegenerateBlockResponse(
+        chosen=clean_dashes(result["chosen"]),
+        alternates=[clean_dashes(a) for a in result["alternates"]],
+        score=result["score"],
+    )
 
 
 @app.post("/find-recruiters", response_model=RecruiterSearchResponse)
