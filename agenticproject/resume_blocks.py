@@ -86,37 +86,53 @@ async def _parse_json_with_repair(raw: str, schema_hint: str) -> Dict[str, Any]:
     return json.loads(repaired)  # let this raise if still broken -- caller handles it
 
 
-ENTRIES_SCHEMA_HINT = (
-    '{"entries": [{"id": "exp-0", "title": "...", "company": "...", '
-    '"dates": "...", "location": "...", "bullets": ["...", "..."]}]}'
+STRUCTURE_SCHEMA_HINT = (
+    '{"header": {"name": "...", "email": "..."}, "summary": "...", '
+    '"entries": [{"id": "exp-0", "title": "...", "company": "...", '
+    '"dates": "...", "location": "...", "bullets": ["...", "..."]}], '
+    '"other_sections": [{"title": "Skills", "content": "..."}, '
+    '{"title": "Education", "content": "..."}]}'
 )
+
 
 def _structure_prompt(resume_text: str) -> str:
     # Built as an f-string, not str.format() -- the schema hint below
     # contains literal JSON braces that str.format() would misparse as
     # placeholders on a second substitution pass.
     return (
-        "Parse the following resume text into its work-experience entries. "
-        "Do NOT rewrite or improve anything -- extract exactly what is there.\n\n"
+        "Parse the following resume text into its structural pieces. "
+        "Do NOT rewrite or improve anything -- extract exactly what is there, "
+        "verbatim.\n\n"
         f"Resume:\n{resume_text[:4000]}\n\n"
-        "Return ONLY valid JSON matching this exact shape "
-        "(id = \"exp-0\", \"exp-1\", ... in resume order):\n"
-        f"{ENTRIES_SCHEMA_HINT}"
+        "- header: candidate's name and email as printed on the resume.\n"
+        "- summary: the professional summary / objective line, if present "
+        "(empty string if none).\n"
+        "- entries: work-experience entries in resume order (id = "
+        "\"exp-0\", \"exp-1\", ...), each with its original bullets.\n"
+        "- other_sections: every other resume section NOT already covered "
+        "above (Skills, Education, Certifications, Projects, Publications, "
+        "etc.) as {title, content} pairs, content as plain text preserving "
+        "line breaks.\n\n"
+        "Return ONLY valid JSON matching this exact shape:\n"
+        f"{STRUCTURE_SCHEMA_HINT}"
     )
 
 
-async def extract_resume_entries(resume_text: str) -> List[Dict[str, Any]]:
-    """One LLM call: structure the resume into experience entries + their
-    original bullets. Pure extraction, no tailoring happens here."""
+async def extract_resume_structure(resume_text: str) -> Dict[str, Any]:
+    """One LLM call: structure the whole resume -- header, summary, work
+    entries + their original bullets, and everything else as passthrough
+    sections. Pure extraction, no tailoring happens here."""
     prompt = _structure_prompt(resume_text)
     raw = await ainvoke_with_fallback(
-        [HumanMessage(content=prompt)], max_tokens=1500, json_mode=True
+        [HumanMessage(content=prompt)], max_tokens=2500, json_mode=True
     )
-    parsed = await _parse_json_with_repair(raw, ENTRIES_SCHEMA_HINT)
+    parsed = await _parse_json_with_repair(raw, STRUCTURE_SCHEMA_HINT)
+
+    header = parsed.get("header") or {}
     entries = parsed.get("entries", [])
-    normalized = []
+    normalized_entries = []
     for i, entry in enumerate(entries):
-        normalized.append({
+        normalized_entries.append({
             "id": entry.get("id") or f"exp-{i}",
             "title": str(entry.get("title", "")).strip(),
             "company": str(entry.get("company", "")).strip(),
@@ -124,7 +140,22 @@ async def extract_resume_entries(resume_text: str) -> List[Dict[str, Any]]:
             "location": str(entry.get("location", "")).strip(),
             "bullets": [str(b).strip() for b in entry.get("bullets", []) if str(b).strip()],
         })
-    return normalized
+
+    other_sections = [
+        {"title": str(s.get("title", "")).strip(), "content": str(s.get("content", "")).strip()}
+        for s in parsed.get("other_sections", [])
+        if str(s.get("title", "")).strip()
+    ]
+
+    return {
+        "header": {
+            "name": str(header.get("name", "")).strip(),
+            "email": str(header.get("email", "")).strip(),
+        },
+        "summary": str(parsed.get("summary", "")).strip(),
+        "entries": normalized_entries,
+        "other_sections": other_sections,
+    }
 
 
 BULLETS_SCHEMA_HINT = '{"bullets": [{"chosen": "...", "alternates": ["...", "..."]}]}'

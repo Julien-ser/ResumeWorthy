@@ -25,7 +25,10 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from llm_fallback import ainvoke_with_fallback
-from resume_blocks import extract_resume_entries, generate_entry_blocks, regenerate_block
+from resume_blocks import extract_resume_structure, generate_entry_blocks, regenerate_block
+from latex_template import blocks_to_tex
+from latex_compile import compile_tex_to_pdf, LatexCompileError
+from fastapi import Response
 from ddgs import DDGS
 from pydantic import BaseModel
 from urllib.parse import urlparse
@@ -715,16 +718,24 @@ async def tailor_resume_stream(
             letter_prompt = _build_letter_prompt(request, candidate_context)
 
             try:
-                entries = await extract_resume_entries(request.resume_text)
+                structure = await extract_resume_structure(request.resume_text)
             except Exception as exc:
                 yield sse("error", {"detail": f"Failed to parse resume structure: {exc}"[:300]})
                 return
 
+            entries = structure["entries"]
             if not entries:
                 yield sse("error", {"detail": "Could not find any experience entries to tailor."})
                 return
 
+            # Full structural context (header/summary/other_sections) the
+            # frontend needs to hold onto for /render-latex later -- the
+            # entries list here is metadata only, tailored blocks stream
+            # separately via "blocks" events below.
             yield sse("meta", {
+                "header": structure["header"],
+                "summary": structure["summary"],
+                "other_sections": structure["other_sections"],
                 "entries": [
                     {"id": e["id"], "title": e["title"], "company": e["company"],
                      "dates": e["dates"], "location": e["location"]}
@@ -804,6 +815,65 @@ async def regenerate_block_endpoint(
         alternates=[clean_dashes(a) for a in result["alternates"]],
         score=result["score"],
     )
+
+
+class RenderLatexHeader(BaseModel):
+    name: str = ""
+    email: str = ""
+
+
+class RenderLatexBlock(BaseModel):
+    id: str
+    chosen: str
+
+
+class RenderLatexEntry(BaseModel):
+    id: str
+    title: str = ""
+    company: str = ""
+    dates: str = ""
+    location: str = ""
+    blocks: List[RenderLatexBlock] = []
+
+
+class RenderLatexOtherSection(BaseModel):
+    title: str
+    content: str = ""
+
+
+class RenderLatexRequest(BaseModel):
+    header: RenderLatexHeader
+    summary: str = ""
+    entries: List[RenderLatexEntry]
+    other_sections: List[RenderLatexOtherSection] = []
+    linkedin_url: str = ""
+    github_url: str = ""
+    portfolio_url: str = ""
+
+
+@app.post("/render-latex")
+async def render_latex(request: RenderLatexRequest):
+    """Compile the current block state (post drag-reorder/alternate-cycling/
+    edits/regeneration -- whatever the frontend currently holds) into a PDF
+    via the same LaTeX macro skeleton as MyExp/resume.tex. No usage gating
+    -- this is a render of already-generated content, not a new tailor."""
+    tex_source = blocks_to_tex(
+        header=request.header.model_dump(),
+        summary=request.summary,
+        entries=[e.model_dump() for e in request.entries],
+        other_sections=[s.model_dump() for s in request.other_sections],
+        linkedin_url=request.linkedin_url,
+        github_url=request.github_url,
+        portfolio_url=request.portfolio_url,
+    )
+    try:
+        pdf_bytes = await compile_tex_to_pdf(tex_source)
+    except LatexCompileError as e:
+        raise HTTPException(status_code=502, detail=f"LaTeX compile failed ({e.engine}): {str(e)[:1000]}")
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return Response(content=pdf_bytes, media_type="application/pdf")
 
 
 @app.post("/find-recruiters", response_model=RecruiterSearchResponse)
