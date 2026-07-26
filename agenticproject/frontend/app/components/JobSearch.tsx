@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useAuth, SignInButton } from "@clerk/nextjs";
 import Tooltip from "./Tooltip";
 
 interface Job {
@@ -31,7 +30,6 @@ function matchScoreStyle(score: number): string {
 }
 
 export default function JobSearch({ onJobsFound, jobData, sharedResumeText, resumeLoaded }: JobSearchProps) {
-  const { isSignedIn } = useAuth();
   const [keywords, setKeywords] = useState("");
   const [location, setLocation] = useState("");
   const [experience, setExperience] = useState("mid");
@@ -84,26 +82,13 @@ export default function JobSearch({ onJobsFound, jobData, sharedResumeText, resu
       <div className="mb-6">
         <h2 className="text-xl font-bold text-stone-900 tracking-tight">Search Jobs</h2>
         <p className="text-sm text-stone-500 mt-1">Find relevant openings using keywords and location.</p>
-        {resumeLoaded && (
-          sharedResumeText ? (
-            <p className="text-xs text-emerald-600 font-medium mt-2 flex items-center gap-1.5">
-              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-              Using your resume for match scoring
-            </p>
-          ) : isSignedIn ? (
-            <p className="text-xs text-stone-400 mt-2">
-              No resume on file — upload one in the Resume Tailor tab to get match scores on results.
-            </p>
-          ) : (
-            <p className="text-xs text-stone-400 mt-2">
-              <SignInButton mode="modal">
-                <button type="button" className="underline underline-offset-2 hover:text-stone-600">Sign in</button>
-              </SignInButton>
-              {" "}and add a resume in the Resume Tailor tab to get match scores on results.
-            </p>
-          )
+        {resumeLoaded && sharedResumeText && (
+          <p className="text-xs text-emerald-600 font-medium mt-2 flex items-center gap-1.5">
+            <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+            Using your resume for match scoring
+          </p>
         )}
       </div>
 

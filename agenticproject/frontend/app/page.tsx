@@ -7,6 +7,7 @@ import JobSearch from "@/components/JobSearch";
 import ResumeTailor from "@/components/ResumeTailor";
 import RecruiterFinder from "@/components/RecruiterFinder";
 import PricingModal from "@/components/PricingModal";
+import ResumeGate from "@/components/ResumeGate";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -74,53 +75,61 @@ export default function Home() {
 
       <main className="container mx-auto px-4 py-8 max-w-4xl">
 
-        {/* Unified card: tab bar + content */}
-        <div className="bg-white rounded-2xl border border-stone-200/70 shadow-[0_1px_4px_0_rgb(0,0,0,0.04)] overflow-hidden">
-
-          {/* Tab bar */}
-          <div className="flex border-b border-stone-100">
-            {TABS.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`relative px-6 py-4 text-sm font-medium transition-colors ${
-                  activeTab === tab.id
-                    ? "text-stone-900"
-                    : "text-stone-400 hover:text-stone-700"
-                }`}
-              >
-                {tab.label}
-                {/* Underline indicator — fades in/out */}
-                <span
-                  className={`absolute bottom-0 left-4 right-4 h-[2px] bg-primary-500 rounded-full transition-opacity duration-200 ${
-                    activeTab === tab.id ? "opacity-100" : "opacity-0"
-                  }`}
-                />
-              </button>
-            ))}
+        {/* Gate: sign in, then a resume on file, before the tabs appear */}
+        {!resumeLoaded ? (
+          <div className="bg-white rounded-2xl border border-stone-200/70 shadow-[0_1px_4px_0_rgb(0,0,0,0.04)] overflow-hidden p-12 text-center">
+            <p className="text-sm text-stone-400">Loading…</p>
           </div>
+        ) : !sharedResumeText ? (
+          <ResumeGate onResumeReady={setSharedResumeText} />
+        ) : (
+          <div className="bg-white rounded-2xl border border-stone-200/70 shadow-[0_1px_4px_0_rgb(0,0,0,0.04)] overflow-hidden">
 
-          {/* Tab content */}
-          {activeTab === "search" && (
-            <JobSearch
-              onJobsFound={setJobData}
-              jobData={jobData}
-              sharedResumeText={sharedResumeText}
-              resumeLoaded={resumeLoaded}
-            />
-          )}
-          {activeTab === "tailor" && (
-            <ResumeTailor
-              onResumeTailored={setResumeData}
-              resumeData={resumeData}
-              onShowPricing={() => setPricingOpen(true)}
-              onResumeTextChange={setSharedResumeText}
-            />
-          )}
-          {activeTab === "recruiters" && (
-            <RecruiterFinder onRecruitersFound={setRecruiterData} recruiterData={recruiterData} />
-          )}
-        </div>
+            {/* Tab bar */}
+            <div className="flex border-b border-stone-100">
+              {TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`relative px-6 py-4 text-sm font-medium transition-colors ${
+                    activeTab === tab.id
+                      ? "text-stone-900"
+                      : "text-stone-400 hover:text-stone-700"
+                  }`}
+                >
+                  {tab.label}
+                  {/* Underline indicator — fades in/out */}
+                  <span
+                    className={`absolute bottom-0 left-4 right-4 h-[2px] bg-primary-500 rounded-full transition-opacity duration-200 ${
+                      activeTab === tab.id ? "opacity-100" : "opacity-0"
+                    }`}
+                  />
+                </button>
+              ))}
+            </div>
+
+            {/* Tab content */}
+            {activeTab === "search" && (
+              <JobSearch
+                onJobsFound={setJobData}
+                jobData={jobData}
+                sharedResumeText={sharedResumeText}
+                resumeLoaded={resumeLoaded}
+              />
+            )}
+            {activeTab === "tailor" && (
+              <ResumeTailor
+                onResumeTailored={setResumeData}
+                resumeData={resumeData}
+                onShowPricing={() => setPricingOpen(true)}
+                onResumeTextChange={setSharedResumeText}
+              />
+            )}
+            {activeTab === "recruiters" && (
+              <RecruiterFinder onRecruitersFound={setRecruiterData} recruiterData={recruiterData} />
+            )}
+          </div>
+        )}
 
         {/* How it works */}
         <div className="mt-10 border-t border-stone-100 pt-8">
