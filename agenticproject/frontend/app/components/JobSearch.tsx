@@ -23,6 +23,8 @@ export default function JobSearch({ onJobsFound, jobData }: JobSearchProps) {
   const [keywords, setKeywords] = useState("");
   const [location, setLocation] = useState("");
   const [experience, setExperience] = useState("mid");
+  const [companyTier, setCompanyTier] = useState("");
+  const [sector, setSector] = useState("");
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState("");
   const [jobs, setJobs]         = useState<Job[]>([]);
@@ -42,6 +44,9 @@ export default function JobSearch({ onJobsFound, jobData }: JobSearchProps) {
           body: JSON.stringify({
             target_title: keywords,
             target_location: location,
+            experience_level: experience,
+            company_tier: companyTier,
+            sector: sector,
             max_results: 10,
           }),
         }
@@ -99,21 +104,56 @@ export default function JobSearch({ onJobsFound, jobData }: JobSearchProps) {
           </div>
         </div>
 
-        <div className="max-w-xs">
-          <label className="block text-[11px] font-semibold text-stone-500 uppercase tracking-widest mb-1.5">
-            Experience Level
-          </label>
-          <select
-            value={experience}
-            onChange={(e) => setExperience(e.target.value)}
-            className={inputClass}
-          >
-            <option value="entry">Entry Level</option>
-            <option value="mid">Mid Level</option>
-            <option value="senior">Senior Level</option>
-            <option value="lead">Lead / Manager</option>
-          </select>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label className="block text-[11px] font-semibold text-stone-500 uppercase tracking-widest mb-1.5">
+              Experience Level
+            </label>
+            <select
+              value={experience}
+              onChange={(e) => setExperience(e.target.value)}
+              className={inputClass}
+            >
+              <option value="internship">Internship</option>
+              <option value="entry">Entry Level</option>
+              <option value="mid">Mid Level</option>
+              <option value="senior">Senior Level</option>
+              <option value="lead">Lead / Manager</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-stone-500 uppercase tracking-widest mb-1.5">
+              Company Tier <span className="text-stone-400 font-normal normal-case">optional</span>
+            </label>
+            <select
+              value={companyTier}
+              onChange={(e) => setCompanyTier(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Any</option>
+              <option value="startup">Startup</option>
+              <option value="midsize">Mid-size</option>
+              <option value="enterprise">Established / Enterprise</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-stone-500 uppercase tracking-widest mb-1.5">
+              Sector <span className="text-stone-400 font-normal normal-case">optional</span>
+            </label>
+            <input
+              type="text"
+              value={sector}
+              onChange={(e) => setSector(e.target.value)}
+              placeholder="Insurance, Robotics, Fintech…"
+              className={inputClass}
+            />
+          </div>
         </div>
+        <p className="text-xs text-stone-400 -mt-2">
+          Tier and sector nudge the search terms rather than strictly filter results — job boards don&apos;t expose company size or industry as real filters.
+        </p>
 
         <button
           type="submit"

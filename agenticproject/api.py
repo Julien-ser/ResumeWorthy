@@ -234,6 +234,9 @@ def internet_search(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
 class JobSearchRequest(BaseModel):
     target_title: str
     target_location: str
+    experience_level: str = ""
+    company_tier: str = ""
+    sector: str = ""
     max_results: int = 10
 
 
@@ -481,6 +484,37 @@ async def get_usage(authorization: Optional[str] = Header(default=None)):
     }
 
 
+# Job boards (Adzuna, DDG-indexed postings) don't expose company size or
+# industry as real structured filters -- these hints get folded into the
+# search query text itself instead, nudging keyword matching rather than
+# strictly filtering. "mid" experience and "midsize"/"enterprise" tier
+# deliberately add no boost term: "mid" is the unmarked default nobody
+# writes in a posting, and "enterprise"/"midsize" as literal keywords are
+# more likely to filter out real matches than find them.
+_EXPERIENCE_HINTS = {
+    "internship": "internship",
+    "entry": "entry level",
+    "senior": "senior",
+    "lead": "lead",
+}
+_TIER_HINTS = {
+    "startup": "startup",
+}
+
+
+def _build_search_terms(request: JobSearchRequest) -> str:
+    parts = [request.target_title]
+    hint = _EXPERIENCE_HINTS.get(request.experience_level)
+    if hint:
+        parts.append(hint)
+    tier_hint = _TIER_HINTS.get(request.company_tier)
+    if tier_hint:
+        parts.append(tier_hint)
+    if request.sector.strip():
+        parts.append(request.sector.strip())
+    return " ".join(parts)
+
+
 @app.post("/search-jobs", response_model=JobSearchResponse)
 async def search_jobs(request: JobSearchRequest):
     """Search for jobs via Adzuna API (falls back to DuckDuckGo if not configured)."""
@@ -505,7 +539,7 @@ async def _search_jobs_adzuna(
         "app_id": app_id,
         "app_key": app_key,
         "results_per_page": min(request.max_results, 20),
-        "what": request.target_title,
+        "what": _build_search_terms(request),
         "where": request.target_location,
         "sort_by": "relevance",
         "content-type": "application/json",
@@ -546,11 +580,12 @@ async def _search_jobs_adzuna(
 
 async def _search_jobs_ddgs(request: JobSearchRequest) -> JobSearchResponse:
     """DuckDuckGo fallback when Adzuna is not configured."""
+    search_terms = _build_search_terms(request)
     search_queries = [
-        f'{request.target_title} {request.target_location} site:linkedin.com/jobs/view',
-        f'{request.target_title} {request.target_location} site:greenhouse.io',
-        f'{request.target_title} {request.target_location} site:lever.co',
-        f'{request.target_title} {request.target_location} "apply now"',
+        f'{search_terms} {request.target_location} site:linkedin.com/jobs/view',
+        f'{search_terms} {request.target_location} site:greenhouse.io',
+        f'{search_terms} {request.target_location} site:lever.co',
+        f'{search_terms} {request.target_location} "apply now"',
     ]
 
     raw_jobs: List[Dict[str, str]] = []
