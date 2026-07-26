@@ -92,7 +92,26 @@ def _looks_like_job_posting(url: str) -> bool:
     lower = url.lower()
     if not lower.startswith("http"):
         return False
-    return any(p in lower for p in _ALLOWED_URL_PATTERNS)
+    if not any(p in lower for p in _ALLOWED_URL_PATTERNS):
+        return False
+
+    # A domain match alone isn't enough -- confirmed live (2026-07-26):
+    # https://job-boards.greenhouse.io/deepmind (company board ROOT, no
+    # job id) passed the check above and came back as a blended snippet
+    # of several unrelated Deepmind roles, not any single posting.
+    # greenhouse.io/lever.co URLs need a company segment AND a job-id
+    # segment; linkedin.com/jobs/view URLs are covered by the pattern
+    # match itself (that path segment only ever points to one posting).
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    netloc = parsed.netloc.lower()
+    if "greenhouse.io" in netloc or "lever.co" in netloc:
+        segments = [p for p in parsed.path.split("/") if p]
+        if len(segments) < 2:
+            return False
+    return True
 
 
 # Confirmed live (2026-07-26): some URLs that pass the allowlist above
