@@ -9,6 +9,7 @@ trades Adzuna's free/instant results for resume-aware relevance on every
 search. Real cost: at least 2 LLM calls per search instead of zero.
 """
 
+import asyncio
 import json
 import re
 from typing import Any, Dict, List
@@ -71,9 +72,18 @@ def _ddg_search(query: str, max_results: int = 6) -> List[Dict[str, str]]:
         return []
 
 
-_SKIP_URL_PATTERNS = [
-    "linkedin.com/feed", "linkedin.com/jobs/search", "/search?", "/browse/",
-    "wikipedia.org", "microsoft.com/en-us/software", "microsoft.com/software",
+# Allowlist, not a blocklist -- confirmed live (2026-07-26) that DDG's
+# site: operator isn't reliably honored (the LLM-generated queries all
+# requested site:linkedin.com/jobs/view or greenhouse.io or lever.co, but
+# results still included robotsguide.com and a Britannica encyclopedia
+# article, the exact class of garbage from the original bug report just
+# resurfacing via this new path). A blocklist can only ever catch domains
+# someone thought to name; an allowlist matching exactly the 3 job boards
+# the LLM is instructed to restrict to can't leak generic web noise
+# through regardless of whether DDG or the LLM actually honored the
+# site: restriction.
+_ALLOWED_URL_PATTERNS = [
+    "linkedin.com/jobs/view", "greenhouse.io", "lever.co",
 ]
 
 
@@ -81,7 +91,7 @@ def _looks_like_job_posting(url: str) -> bool:
     lower = url.lower()
     if not lower.startswith("http"):
         return False
-    return not any(p in lower for p in _SKIP_URL_PATTERNS)
+    return any(p in lower for p in _ALLOWED_URL_PATTERNS)
 
 
 QUERY_GEN_SCHEMA_HINT = '{"queries": ["...", "...", "..."]}'
@@ -136,10 +146,19 @@ async def agentic_job_search(request) -> List[Dict[str, str]]:
     if not queries:
         queries = [_fallback_query(request)]
 
+    # _ddg_search is a blocking sync call (DDGS().text(...)) -- confirmed
+    # live this was a real latency contributor: running up to 3 queries
+    # sequentially inside an async function blocks the event loop each
+    # time with zero concurrency. asyncio.to_thread + gather runs them in
+    # parallel instead.
+    result_batches = await asyncio.gather(
+        *[asyncio.to_thread(_ddg_search, query, 6) for query in queries]
+    )
+
     candidates: List[Dict[str, str]] = []
     seen_urls: set = set()
-    for query in queries:
-        for result in _ddg_search(query, max_results=6):
+    for batch in result_batches:
+        for result in batch:
             url = result.get("url", "").strip()
             if not _looks_like_job_posting(url) or url in seen_urls:
                 continue
