@@ -1,11 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useAuth } from "@clerk/nextjs";
 import Header from "@/components/Header";
 import JobSearch from "@/components/JobSearch";
 import ResumeTailor from "@/components/ResumeTailor";
 import RecruiterFinder from "@/components/RecruiterFinder";
 import PricingModal from "@/components/PricingModal";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const TABS = [
   { id: "search",     label: "Job Search"      },
@@ -16,11 +19,19 @@ const TABS = [
 type Tab = (typeof TABS)[number]["id"];
 
 export default function Home() {
+  const { isSignedIn, getToken } = useAuth();
   const [activeTab, setActiveTab]       = useState<Tab>("search");
   const [jobData, setJobData]           = useState(null);
   const [resumeData, setResumeData]     = useState(null);
   const [recruiterData, setRecruiterData] = useState(null);
   const [pricingOpen, setPricingOpen]   = useState(false);
+
+  // Shared across tabs: the raw candidate resume text (not the tailored
+  // output) so Job Search can use it for match scoring without asking the
+  // user to re-upload, and so it's preloaded even before they visit the
+  // Resume Tailor tab this session, per a saved account resume.
+  const [sharedResumeText, setSharedResumeText] = useState("");
+  const [resumeLoaded, setResumeLoaded] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -32,6 +43,30 @@ export default function Home() {
       window.history.replaceState({}, "", "/");
     }
   }, []);
+
+  useEffect(() => {
+    const loadSavedResume = async () => {
+      if (!isSignedIn) {
+        setResumeLoaded(true);
+        return;
+      }
+      try {
+        const token = await getToken();
+        const res = await fetch(`${API_URL}/my-resume`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.resume_text) setSharedResumeText(data.resume_text);
+        }
+      } catch {
+        // no saved resume yet, or request failed -- fine, just start empty
+      } finally {
+        setResumeLoaded(true);
+      }
+    };
+    loadSavedResume();
+  }, [isSignedIn]);
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -67,13 +102,19 @@ export default function Home() {
 
           {/* Tab content */}
           {activeTab === "search" && (
-            <JobSearch onJobsFound={setJobData} jobData={jobData} />
+            <JobSearch
+              onJobsFound={setJobData}
+              jobData={jobData}
+              sharedResumeText={sharedResumeText}
+              resumeLoaded={resumeLoaded}
+            />
           )}
           {activeTab === "tailor" && (
             <ResumeTailor
               onResumeTailored={setResumeData}
               resumeData={resumeData}
               onShowPricing={() => setPricingOpen(true)}
+              onResumeTextChange={setSharedResumeText}
             />
           )}
           {activeTab === "recruiters" && (

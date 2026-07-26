@@ -23,6 +23,7 @@ interface ResumeTailorProps {
   onResumeTailored: (data: any) => void;
   resumeData: any;
   onShowPricing: () => void;
+  onResumeTextChange?: (text: string) => void;
 }
 
 const inputClass =
@@ -35,7 +36,7 @@ const sectionHeader = (n: string, title: string) => (
   </div>
 );
 
-export default function ResumeTailor({ onResumeTailored, resumeData, onShowPricing }: ResumeTailorProps) {
+export default function ResumeTailor({ onResumeTailored, resumeData, onShowPricing, onResumeTextChange }: ResumeTailorProps) {
   const { isSignedIn, getToken } = useAuth();
   const [resumeFile, setResumeFile]             = useState<File | null>(null);
   const [resumeText, setResumeText]             = useState("");
@@ -90,6 +91,7 @@ export default function ResumeTailor({ onResumeTailored, resumeData, onShowPrici
 
       const uploadData = await uploadResponse.json();
       setCachedResumeText(uploadData.text || "");
+      onResumeTextChange?.(uploadData.text || "");
 
       const newAutoDetected = { linkedin: false, portfolio: false, github: false };
 
@@ -135,6 +137,10 @@ export default function ResumeTailor({ onResumeTailored, resumeData, onShowPrici
         }
         resumeContent = (await uploadResponse.json()).text;
       }
+
+      // Covers the "paste resume text" path too (skipped the upload
+      // branch entirely, so onResumeTextChange never fired above).
+      onResumeTextChange?.(resumeContent || "");
 
       const token = await getToken();
 

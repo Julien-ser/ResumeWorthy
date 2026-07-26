@@ -26,6 +26,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from llm_fallback import ainvoke_with_fallback
 from resume_blocks import extract_resume_structure, generate_entry_blocks, regenerate_block
+from agentic_search import agentic_job_search, score_and_rank_jobs
 from latex_template import blocks_to_tex
 from latex_compile import compile_tex_to_pdf, LatexCompileError
 from fastapi import Response
@@ -77,6 +78,16 @@ def _init_db():
             is_pro        INTEGER DEFAULT 0,
             stripe_customer_id      TEXT DEFAULT '',
             stripe_subscription_id  TEXT DEFAULT ''
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_resumes (
+            clerk_user_id TEXT PRIMARY KEY,
+            resume_text   TEXT DEFAULT '',
+            linkedin_url  TEXT DEFAULT '',
+            github_url    TEXT DEFAULT '',
+            portfolio_url TEXT DEFAULT '',
+            updated_at    TEXT DEFAULT ''
         )
     """)
     conn.commit()
@@ -198,6 +209,42 @@ def lookup_user_by_stripe_customer(stripe_customer_id: str) -> Optional[str]:
     return row[0] if row else None
 
 
+def save_user_resume(
+    clerk_user_id: str, resume_text: str,
+    linkedin_url: str = "", github_url: str = "", portfolio_url: str = "",
+):
+    if not resume_text.strip():
+        return  # nothing worth persisting
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        INSERT INTO user_resumes (clerk_user_id, resume_text, linkedin_url, github_url, portfolio_url, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(clerk_user_id) DO UPDATE SET
+            resume_text  = excluded.resume_text,
+            linkedin_url = excluded.linkedin_url,
+            github_url   = excluded.github_url,
+            portfolio_url = excluded.portfolio_url,
+            updated_at   = excluded.updated_at
+    """, (clerk_user_id, resume_text, linkedin_url, github_url, portfolio_url, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+
+def get_user_resume(clerk_user_id: str) -> Optional[Dict[str, str]]:
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT resume_text, linkedin_url, github_url, portfolio_url, updated_at FROM user_resumes WHERE clerk_user_id = ?",
+        (clerk_user_id,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "resume_text": row[0], "linkedin_url": row[1], "github_url": row[2],
+        "portfolio_url": row[3], "updated_at": row[4],
+    }
+
+
 # ==================== FastAPI app ====================
 _frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3001")
 
@@ -237,11 +284,12 @@ class JobSearchRequest(BaseModel):
     experience_level: str = ""
     company_tier: str = ""
     sector: str = ""
+    resume_text: str = ""
     max_results: int = 10
 
 
 class JobSearchResponse(BaseModel):
-    jobs: List[Dict[str, str]]
+    jobs: List[Dict[str, Any]]  # match_score is numeric when a resume is on file
     count: int
 
 
@@ -585,14 +633,52 @@ async def _llm_reformulate_query(request: JobSearchRequest) -> str:
 
 
 @app.post("/search-jobs", response_model=JobSearchResponse)
-async def search_jobs(request: JobSearchRequest):
-    """Search for jobs via Adzuna API (falls back to DuckDuckGo if not configured)."""
-    adzuna_app_id = os.environ.get("ADZUNA_APP_ID")
-    adzuna_app_key = os.environ.get("ADZUNA_API_KEY")
+async def search_jobs(request: JobSearchRequest, authorization: Optional[str] = Header(default=None)):
+    """Agentic LLM-orchestrated search is the PRIMARY path (deliberate
+    choice, not the default -- Adzuna alone was faster/free and already
+    proven, but this trades that for resume-aware relevance on every
+    search). Adzuna is the fallback/top-up source when the agentic path
+    comes up short, and DDGS's fixed-query search is the final safety net
+    if even that finds nothing.
 
-    if adzuna_app_id and adzuna_app_key:
-        return await _search_jobs_adzuna(request, adzuna_app_id, adzuna_app_key)
-    return await _search_jobs_ddgs(request)
+    Real cost accepted with this design: every search now costs at least
+    2 LLM calls (query generation + resume-match scoring) instead of
+    Adzuna's free/instant path in the common case -- meaningful against
+    the 50-req/day OpenRouter cap this app already manages via the Groq
+    backup tier."""
+    user_id = verify_clerk_token(authorization)
+    resume_text = request.resume_text
+    if not resume_text.strip() and user_id is not None:
+        saved = get_user_resume(user_id)
+        if saved and saved["resume_text"]:
+            resume_text = saved["resume_text"]
+    if resume_text != request.resume_text:
+        request = request.model_copy(update={"resume_text": resume_text})
+
+    candidates = await agentic_job_search(request)
+
+    if len(candidates) < request.max_results:
+        adzuna_app_id = os.environ.get("ADZUNA_APP_ID")
+        adzuna_app_key = os.environ.get("ADZUNA_API_KEY")
+        seen_links = {c.get("link", "") for c in candidates}
+
+        if adzuna_app_id and adzuna_app_key:
+            for job in await _search_jobs_adzuna_pool(request, adzuna_app_id, adzuna_app_key):
+                if len(candidates) >= request.max_results:
+                    break
+                link = job.get("link", "")
+                if link and link in seen_links:
+                    continue
+                if link:
+                    seen_links.add(link)
+                candidates.append(job)
+
+        if not candidates:
+            ddgs_result = await _search_jobs_ddgs(request)
+            candidates = ddgs_result.jobs
+
+    ranked = await score_and_rank_jobs(candidates, request)
+    return JobSearchResponse(jobs=ranked, count=len(ranked))
 
 
 def _adzuna_country(target_location: str) -> str:
@@ -650,9 +736,13 @@ async def _adzuna_raw_query(
     return jobs
 
 
-async def _search_jobs_adzuna(
+async def _search_jobs_adzuna_pool(
     request: JobSearchRequest, app_id: str, app_key: str
-) -> JobSearchResponse:
+) -> List[Dict[str, str]]:
+    """Returns a raw pooled job list (not a JobSearchResponse) -- Adzuna is
+    now the fallback/top-up source behind the agentic search, not the
+    primary path, so callers combine this with other candidate lists
+    rather than returning it directly."""
     country = _adzuna_country(request.target_location)
     is_remote = _is_remote_like_location(request.target_location)
     # Adzuna's `where` expects a real geocodable place -- "Remote" isn't
@@ -704,7 +794,7 @@ async def _search_jobs_adzuna(
         except Exception:
             pass
 
-    return JobSearchResponse(jobs=collected, count=len(collected))
+    return collected
 
 
 async def _search_jobs_ddgs(request: JobSearchRequest) -> JobSearchResponse:
@@ -872,6 +962,9 @@ async def tailor_resume_stream(
     appear progressively on the frontend rather than all at once."""
     user_id = verify_clerk_token(authorization)
     _check_tailor_usage_gate(user_id)
+
+    if user_id is not None:
+        save_user_resume(user_id, request.resume_text, request.linkedin_url, request.github_url, request.portfolio_url)
 
     async def event_stream():
         def sse(event: str, data: dict) -> str:
@@ -1115,7 +1208,7 @@ async def find_recruiters(request: RecruiterSearchRequest):
 
 
 @app.post("/upload-resume")
-async def upload_resume(file: UploadFile = File(...)):
+async def upload_resume(file: UploadFile = File(...), authorization: Optional[str] = Header(default=None)):
     try:
         contents = await file.read()
         filename = file.filename or ""
@@ -1128,6 +1221,13 @@ async def upload_resume(file: UploadFile = File(...)):
                 combined = text + "\n" + "\n".join(pdf_links)
 
         profiles = extract_urls_from_resume(combined)
+
+        # Auto-save to the account's profile (if signed in) so it's
+        # available for job-match scoring without re-uploading every time.
+        user_id = verify_clerk_token(authorization)
+        if user_id is not None:
+            save_user_resume(user_id, text, profiles["linkedin"], profiles["github"], profiles["portfolio"])
+
         return {
             "success": True,
             "text": text,
@@ -1137,6 +1237,33 @@ async def upload_resume(file: UploadFile = File(...)):
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class SaveResumeRequest(BaseModel):
+    resume_text: str
+    linkedin_url: str = ""
+    github_url: str = ""
+    portfolio_url: str = ""
+
+
+@app.post("/save-resume")
+async def save_resume(request: SaveResumeRequest, authorization: Optional[str] = Header(default=None)):
+    user_id = verify_clerk_token(authorization)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Sign in to save your resume.")
+    save_user_resume(user_id, request.resume_text, request.linkedin_url, request.github_url, request.portfolio_url)
+    return {"saved": True}
+
+
+@app.get("/my-resume")
+async def my_resume(authorization: Optional[str] = Header(default=None)):
+    user_id = verify_clerk_token(authorization)
+    if user_id is None:
+        return {"resume_text": "", "linkedin_url": "", "github_url": "", "portfolio_url": ""}
+    saved = get_user_resume(user_id)
+    if not saved:
+        return {"resume_text": "", "linkedin_url": "", "github_url": "", "portfolio_url": ""}
+    return saved
 
 
 @app.post("/create-checkout-session")
