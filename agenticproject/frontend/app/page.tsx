@@ -7,7 +7,7 @@ import JobSearch from "@/components/JobSearch";
 import ResumeTailor from "@/components/ResumeTailor";
 import RecruiterFinder from "@/components/RecruiterFinder";
 import PricingModal from "@/components/PricingModal";
-import ResumeGate from "@/components/ResumeGate";
+import ResumeGate, { DetectedProfiles } from "@/components/ResumeGate";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -34,6 +34,13 @@ export default function Home() {
   const [sharedResumeText, setSharedResumeText] = useState("");
   const [resumeLoaded, setResumeLoaded] = useState(false);
 
+  // Profile links extracted alongside the resume (by the gate's upload, or
+  // by a previously saved account resume) -- shared the same way so Resume
+  // Tailor doesn't need a second upload to get them back.
+  const [sharedLinkedinUrl, setSharedLinkedinUrl] = useState("");
+  const [sharedGithubUrl, setSharedGithubUrl] = useState("");
+  const [sharedPortfolioUrl, setSharedPortfolioUrl] = useState("");
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("upgraded") === "true") {
@@ -59,6 +66,9 @@ export default function Home() {
         if (res.ok) {
           const data = await res.json();
           if (data.resume_text) setSharedResumeText(data.resume_text);
+          if (data.linkedin_url) setSharedLinkedinUrl(data.linkedin_url);
+          if (data.github_url) setSharedGithubUrl(data.github_url);
+          if (data.portfolio_url) setSharedPortfolioUrl(data.portfolio_url);
         }
       } catch {
         // no saved resume yet, or request failed -- fine, just start empty
@@ -81,7 +91,14 @@ export default function Home() {
             <p className="text-sm text-stone-400">Loading…</p>
           </div>
         ) : !sharedResumeText ? (
-          <ResumeGate onResumeReady={setSharedResumeText} />
+          <ResumeGate
+            onResumeReady={(text, profiles) => {
+              setSharedResumeText(text);
+              if (profiles?.linkedin_url) setSharedLinkedinUrl(profiles.linkedin_url);
+              if (profiles?.github_url) setSharedGithubUrl(profiles.github_url);
+              if (profiles?.portfolio_url) setSharedPortfolioUrl(profiles.portfolio_url);
+            }}
+          />
         ) : (
           <div className="bg-white rounded-2xl border border-stone-200/70 shadow-[0_1px_4px_0_rgb(0,0,0,0.04)] overflow-hidden">
 
@@ -123,6 +140,10 @@ export default function Home() {
                 resumeData={resumeData}
                 onShowPricing={() => setPricingOpen(true)}
                 onResumeTextChange={setSharedResumeText}
+                preloadedResumeText={sharedResumeText}
+                preloadedLinkedinUrl={sharedLinkedinUrl}
+                preloadedGithubUrl={sharedGithubUrl}
+                preloadedPortfolioUrl={sharedPortfolioUrl}
               />
             )}
             {activeTab === "recruiters" && (

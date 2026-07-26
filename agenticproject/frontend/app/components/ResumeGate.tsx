@@ -5,8 +5,14 @@ import { useAuth, SignInButton } from "@clerk/nextjs";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+export interface DetectedProfiles {
+  linkedin_url: string;
+  github_url: string;
+  portfolio_url: string;
+}
+
 interface ResumeGateProps {
-  onResumeReady: (text: string) => void;
+  onResumeReady: (text: string, profiles?: DetectedProfiles) => void;
 }
 
 export default function ResumeGate({ onResumeReady }: ResumeGateProps) {
@@ -36,9 +42,14 @@ export default function ResumeGate({ onResumeReady }: ResumeGateProps) {
       }
       const data = await res.json();
       // /upload-resume already auto-saves to the account when signed in
-      // (with an auth header) -- this just propagates the text into the
-      // shared app state so the gate can close.
-      onResumeReady(data.text || "");
+      // (with an auth header) -- this propagates the text AND the
+      // auto-detected profile links into shared app state, so Resume
+      // Tailor doesn't need a second upload to get them.
+      onResumeReady(data.text || "", {
+        linkedin_url: data.linkedin_url || "",
+        github_url: data.github_url || "",
+        portfolio_url: data.portfolio_url || "",
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to process resume");
     } finally {

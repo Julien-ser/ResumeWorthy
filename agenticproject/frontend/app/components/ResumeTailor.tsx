@@ -24,6 +24,13 @@ interface ResumeTailorProps {
   resumeData: any;
   onShowPricing: () => void;
   onResumeTextChange?: (text: string) => void;
+  // Already-uploaded resume + auto-detected profile links from the gate
+  // (or a previously saved account resume) -- seeds this tab's own form
+  // state so the user doesn't have to upload a second time to see it.
+  preloadedResumeText?: string;
+  preloadedLinkedinUrl?: string;
+  preloadedGithubUrl?: string;
+  preloadedPortfolioUrl?: string;
 }
 
 const inputClass =
@@ -36,7 +43,10 @@ const sectionHeader = (n: string, title: string) => (
   </div>
 );
 
-export default function ResumeTailor({ onResumeTailored, resumeData, onShowPricing, onResumeTextChange }: ResumeTailorProps) {
+export default function ResumeTailor({
+  onResumeTailored, resumeData, onShowPricing, onResumeTextChange,
+  preloadedResumeText, preloadedLinkedinUrl, preloadedGithubUrl, preloadedPortfolioUrl,
+}: ResumeTailorProps) {
   const { isSignedIn, getToken } = useAuth();
   const [resumeFile, setResumeFile]             = useState<File | null>(null);
   const [resumeText, setResumeText]             = useState("");
@@ -45,6 +55,34 @@ export default function ResumeTailor({ onResumeTailored, resumeData, onShowPrici
   const [portfolioUrl, setPortfolioUrl]         = useState("");
   const [githubUrl, setGithubUrl]               = useState("");
   const [autoDetected, setAutoDetected]         = useState({ linkedin: false, portfolio: false, github: false });
+  const [preloadApplied, setPreloadApplied]     = useState(false);
+  const [preloadedNotice, setPreloadedNotice]   = useState(false);
+
+  // Seeds this tab's form from a resume already uploaded elsewhere (the
+  // sign-in gate, or a previously saved account resume) -- applies once,
+  // and only into fields the user hasn't already typed something into.
+  useEffect(() => {
+    if (preloadApplied || !preloadedResumeText) return;
+    setPreloadApplied(true);
+    setPreloadedNotice(true);
+    setResumeText((prev) => prev || preloadedResumeText);
+    setCachedResumeText((prev) => prev || preloadedResumeText);
+    const newAutoDetected = { linkedin: false, portfolio: false, github: false };
+    if (preloadedLinkedinUrl && !linkedinUrl) {
+      setLinkedinUrl(preloadedLinkedinUrl);
+      newAutoDetected.linkedin = true;
+    }
+    if (preloadedGithubUrl && !githubUrl) {
+      setGithubUrl(preloadedGithubUrl);
+      newAutoDetected.github = true;
+    }
+    if (preloadedPortfolioUrl && !portfolioUrl) {
+      setPortfolioUrl(preloadedPortfolioUrl);
+      newAutoDetected.portfolio = true;
+    }
+    setAutoDetected(newAutoDetected);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preloadedResumeText, preloadedLinkedinUrl, preloadedGithubUrl, preloadedPortfolioUrl, preloadApplied]);
   const [jobTitle, setJobTitle]                 = useState("");
   const [jobDescription, setJobDescription]     = useState("");
   const [loading, setLoading]                   = useState(false);
@@ -436,6 +474,15 @@ export default function ResumeTailor({ onResumeTailored, resumeData, onShowPrici
         {/* Section 1 — Resume */}
         <div className="px-6 md:px-8 py-6 space-y-4">
           {sectionHeader("1", "Your Resume")}
+
+          {preloadedNotice && !resumeFile && (
+            <p className="text-xs text-emerald-600 font-medium -mt-2 flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              Loaded from your account — edit below or upload a new file to replace it
+            </p>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-stone-700 mb-1.5">
