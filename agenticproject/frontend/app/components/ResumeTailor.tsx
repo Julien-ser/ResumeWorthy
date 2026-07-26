@@ -3,6 +3,12 @@
 import { useState, useEffect } from "react";
 import { jsPDF } from "jspdf";
 import { useAuth, SignInButton } from "@clerk/nextjs";
+import BlockCanvas from "./BlockCanvas";
+import LatexPreview from "./LatexPreview";
+import Tooltip from "./Tooltip";
+import { streamSSE, SSEError } from "../lib/sseStream";
+import { structureToMarkdown } from "../lib/toMarkdown";
+import type { ResumeStructure, ResumeEntry } from "../lib/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -43,8 +49,9 @@ export default function ResumeTailor({ onResumeTailored, resumeData, onShowPrici
   const [loading, setLoading]                   = useState(false);
   const [uploading, setUploading]               = useState(false);
   const [error, setError]                       = useState("");
-  const [tailoredResume, setTailoredResume]     = useState("");
+  const [structure, setStructure]               = useState<ResumeStructure | null>(null);
   const [coverLetter, setCoverLetter]           = useState("");
+  const [coverLetterLoading, setCoverLetterLoading] = useState(false);
   const [usage, setUsage]                       = useState<UsageSummary | null>(null);
 
   useEffect(() => {
@@ -110,8 +117,9 @@ export default function ResumeTailor({ onResumeTailored, resumeData, onShowPrici
     e.preventDefault();
     setLoading(true);
     setError("");
-    setTailoredResume("");
+    setStructure(null);
     setCoverLetter("");
+    setCoverLetterLoading(true);
 
     try {
       let resumeContent = resumeFile ? cachedResumeText : resumeText;
@@ -129,12 +137,9 @@ export default function ResumeTailor({ onResumeTailored, resumeData, onShowPrici
       }
 
       const token = await getToken();
-      const response = await fetch(`${API_URL}/tailor-resume`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+
+      for await (const evt of streamSSE(`${API_URL}/tailor-resume-stream`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: JSON.stringify({
           resume_text: resumeContent,
           job_description: jobDescription,
@@ -143,27 +148,57 @@ export default function ResumeTailor({ onResumeTailored, resumeData, onShowPrici
           portfolio_url: portfolioUrl,
           github_url: githubUrl,
         }),
-      });
-
-      if (response.status === 402) {
-        onShowPricing();
-        setLoading(false);
-        return;
+      })) {
+        if (evt.event === "meta") {
+          const entries: ResumeEntry[] = evt.data.entries.map((e: any) => ({
+            id: e.id, title: e.title, company: e.company, dates: e.dates, location: e.location, blocks: null,
+          }));
+          setStructure({
+            header: evt.data.header,
+            summary: evt.data.summary,
+            otherSections: evt.data.other_sections ?? [],
+            entries,
+          });
+        } else if (evt.event === "blocks") {
+          setStructure((prev) => {
+            if (!prev) return prev;
+            const entries = prev.entries.map((entry) => {
+              if (entry.id !== evt.data.entry_id) return entry;
+              return {
+                ...entry,
+                blocks: evt.data.blocks.map((b: any) => ({
+                  id: b.id,
+                  candidates: [b.chosen, ...(b.alternates ?? [])],
+                  activeIndex: 0,
+                  original: b.original,
+                  score: b.score ?? 0,
+                })),
+              };
+            });
+            return { ...prev, entries };
+          });
+        } else if (evt.event === "cover_letter") {
+          setCoverLetter(evt.data.text || "");
+          setCoverLetterLoading(false);
+        } else if (evt.event === "entry_error") {
+          // one block group or the cover letter failed -- don't abort the whole stream
+          console.warn("tailor-resume-stream partial failure:", evt.data.detail);
+        } else if (evt.event === "error") {
+          throw new Error(evt.data.detail || "Tailoring failed");
+        } else if (evt.event === "done") {
+          setCoverLetterLoading(false);
+        }
       }
 
-      if (!response.ok) {
-        let detail = "Failed to tailor resume";
-        try { const d = await response.json(); if (d?.detail) detail = String(d.detail); } catch {}
-        throw new Error(detail);
-      }
-
-      const data = await response.json();
-      setTailoredResume(data.tailored_resume || "");
-      setCoverLetter(data.cover_letter || "");
-      onResumeTailored(data);
+      onResumeTailored({});
       loadUsage();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      if (err instanceof SSEError && err.status === 402) {
+        onShowPricing();
+      } else {
+        setError(err instanceof Error ? err.message : "An error occurred");
+      }
+      setCoverLetterLoading(false);
     } finally {
       setLoading(false);
     }
@@ -537,49 +572,66 @@ export default function ResumeTailor({ onResumeTailored, resumeData, onShowPrici
       )}
 
       {/* Results */}
-      {tailoredResume && (
-        <div className="border-t border-stone-100 px-6 md:px-8 pt-6 pb-7 space-y-4">
-          <ResultCard
-            title="Tailored Resume"
-            content={tailoredResume}
-            onDownload={() => downloadResumePDF(tailoredResume)}
+      {structure && (
+        <div className="border-t border-stone-100 px-6 md:px-8 pt-6 pb-7 space-y-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h3 className="text-[11px] font-semibold text-stone-500 uppercase tracking-widest">Tailored Resume</h3>
+              <Tooltip content="Blocks appear as each section finishes generating. Cycle alternates, drag to reorder, or regenerate any bullet.">
+                <span className="text-stone-300 text-xs cursor-help">ⓘ</span>
+              </Tooltip>
+            </div>
+            <button
+              type="button"
+              onClick={() => downloadResumePDF(structureToMarkdown(structure))}
+              className="text-xs font-semibold text-white bg-stone-900 hover:bg-stone-700 active:scale-[0.97] px-3.5 py-1.5 rounded-xl transition-all duration-150"
+            >
+              Download PDF
+            </button>
+          </div>
+
+          <BlockCanvas
+            entries={structure.entries}
+            onEntriesChange={(entries) => setStructure((prev) => (prev ? { ...prev, entries } : prev))}
+            jobDescription={jobDescription}
+            getToken={getToken}
           />
-          {coverLetter && (
-            <ResultCard
-              title="Cover Letter"
-              content={coverLetter}
-              onDownload={() => downloadCoverLetterPDF(coverLetter)}
-            />
-          )}
+
+          <LatexPreview
+            structure={structure}
+            linkedinUrl={linkedinUrl}
+            githubUrl={githubUrl}
+            portfolioUrl={portfolioUrl}
+          />
+
+          <div className="border border-stone-100 rounded-2xl overflow-hidden">
+            <div className="px-5 py-4 flex justify-between items-center border-b border-stone-100 bg-stone-50/60">
+              <h3 className="text-[11px] font-semibold text-stone-500 uppercase tracking-widest">Cover Letter</h3>
+              {coverLetter && (
+                <button
+                  onClick={() => downloadCoverLetterPDF(coverLetter)}
+                  className="text-xs font-semibold text-white bg-stone-900 hover:bg-stone-700 active:scale-[0.97] px-3.5 py-1.5 rounded-xl transition-all duration-150"
+                >
+                  Download PDF
+                </button>
+              )}
+            </div>
+            <div className="px-5 py-4 max-h-80 overflow-y-auto whitespace-pre-wrap text-xs text-stone-700 leading-relaxed font-mono bg-white">
+              {coverLetterLoading && !coverLetter ? (
+                <div className="space-y-2 py-2">
+                  <div className="h-2.5 bg-stone-100 rounded animate-pulse w-full" />
+                  <div className="h-2.5 bg-stone-100 rounded animate-pulse w-11/12" />
+                  <div className="h-2.5 bg-stone-100 rounded animate-pulse w-4/5" />
+                  <div className="h-2.5 bg-stone-100 rounded animate-pulse w-full" />
+                  <div className="h-2.5 bg-stone-100 rounded animate-pulse w-2/3" />
+                </div>
+              ) : (
+                coverLetter
+              )}
+            </div>
+          </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function ResultCard({
-  title,
-  content,
-  onDownload,
-}: {
-  title: string;
-  content: string;
-  onDownload: () => void;
-}) {
-  return (
-    <div className="border border-stone-100 rounded-2xl overflow-hidden">
-      <div className="px-5 py-4 flex justify-between items-center border-b border-stone-100 bg-stone-50/60">
-        <h3 className="text-[11px] font-semibold text-stone-500 uppercase tracking-widest">{title}</h3>
-        <button
-          onClick={onDownload}
-          className="text-xs font-semibold text-white bg-stone-900 hover:bg-stone-700 active:scale-[0.97] px-3.5 py-1.5 rounded-xl transition-all duration-150"
-        >
-          Download PDF
-        </button>
-      </div>
-      <div className="px-5 py-4 max-h-80 overflow-y-auto whitespace-pre-wrap text-xs text-stone-700 leading-relaxed font-mono bg-white">
-        {content}
-      </div>
     </div>
   );
 }
