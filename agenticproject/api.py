@@ -654,13 +654,24 @@ async def _search_jobs_adzuna(
     request: JobSearchRequest, app_id: str, app_key: str
 ) -> JobSearchResponse:
     country = _adzuna_country(request.target_location)
+    is_remote = _is_remote_like_location(request.target_location)
     # Adzuna's `where` expects a real geocodable place -- "Remote" isn't
     # one (confirmed live: it returned zero results). Omitting `where`
-    # entirely searches nationwide for the detected country instead.
-    where = "" if _is_remote_like_location(request.target_location) else request.target_location
+    # entirely searches nationwide for the detected country instead of
+    # failing to geocode a non-place.
+    where = "" if is_remote else request.target_location
+
+    ladder = _search_term_ladder(request)
+    if is_remote:
+        # Dropping `where` alone just searches the whole country blind --
+        # confirmed live it returned on-site defense-contractor jobs in
+        # random counties, nothing actually remote-friendly. Appending
+        # "remote" as a keyword biases toward postings that literally say
+        # so, which is the closest Adzuna gets to a real remote filter.
+        ladder = [f"{q} remote" for q in ladder]
 
     jobs: List[Dict[str, str]] = []
-    for what in _search_term_ladder(request):
+    for what in ladder:
         jobs = await _adzuna_raw_query(app_id, app_key, country, what, where, request.max_results)
         if jobs:
             return JobSearchResponse(jobs=jobs, count=len(jobs))
