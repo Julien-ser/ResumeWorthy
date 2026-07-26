@@ -670,22 +670,41 @@ async def _search_jobs_adzuna(
         # so, which is the closest Adzuna gets to a real remote filter.
         ladder = [f"{q} remote" for q in ladder]
 
-    jobs: List[Dict[str, str]] = []
+    # Pool results across ladder levels (deduped by link) instead of
+    # stopping at the first non-empty level -- a level that only turns up
+    # 1-2 jobs used to short-circuit and leave the rest of max_results
+    # unfilled even though broader levels would've found more.
+    collected: List[Dict[str, str]] = []
+    seen_links: set = set()
+
+    def _add_jobs(batch: List[Dict[str, str]]) -> None:
+        for job in batch:
+            if len(collected) >= request.max_results:
+                return
+            link = job.get("link", "")
+            if link and link in seen_links:
+                continue
+            if link:
+                seen_links.add(link)
+            collected.append(job)
+
     for what in ladder:
-        jobs = await _adzuna_raw_query(app_id, app_key, country, what, where, request.max_results)
-        if jobs:
-            return JobSearchResponse(jobs=jobs, count=len(jobs))
+        if len(collected) >= request.max_results:
+            break
+        _add_jobs(await _adzuna_raw_query(app_id, app_key, country, what, where, request.max_results))
 
-    # Deterministic ladder exhausted (even bare title+location came back
-    # empty) -- one LLM call to reformulate, rather than just giving up.
-    try:
-        reformulated = await _llm_reformulate_query(request)
-        if reformulated:
-            jobs = await _adzuna_raw_query(app_id, app_key, country, reformulated, where, request.max_results)
-    except Exception:
-        pass
+    # Deterministic ladder exhausted without filling max_results -- one LLM
+    # call to reformulate and top up, rather than returning a short list
+    # (or nothing) when a differently-worded query might find more.
+    if len(collected) < request.max_results:
+        try:
+            reformulated = await _llm_reformulate_query(request)
+            if reformulated:
+                _add_jobs(await _adzuna_raw_query(app_id, app_key, country, reformulated, where, request.max_results))
+        except Exception:
+            pass
 
-    return JobSearchResponse(jobs=jobs, count=len(jobs))
+    return JobSearchResponse(jobs=collected, count=len(collected))
 
 
 async def _search_jobs_ddgs(request: JobSearchRequest) -> JobSearchResponse:
