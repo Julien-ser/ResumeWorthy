@@ -503,6 +503,10 @@ _TIER_HINTS = {
 
 
 def _build_search_terms(request: JobSearchRequest) -> str:
+    """Full-boost query string (all filters applied). Used as-is by the DDGS
+    fallback; Adzuna uses _search_term_ladder() instead since it's the path
+    that actually hit the over-narrowing bug (internship+startup+city
+    stacked to zero results even though internship alone found 5)."""
     parts = [request.target_title]
     hint = _EXPERIENCE_HINTS.get(request.experience_level)
     if hint:
@@ -513,6 +517,71 @@ def _build_search_terms(request: JobSearchRequest) -> str:
     if request.sector.strip():
         parts.append(request.sector.strip())
     return " ".join(parts)
+
+
+def _search_term_ladder(request: JobSearchRequest) -> List[str]:
+    """Ordered query strings from most-specific to least, dropping the
+    weakest signal first. Company tier keywords are dropped first --
+    "startup" often isn't literally in a posting even at a real startup,
+    so it's the most likely single term to zero out real matches. Sector
+    is user-deliberate but still just a keyword nudge, dropped second.
+    Experience level is core intent (internship vs senior genuinely
+    matters), kept until the last deterministic level."""
+    title = request.target_title
+    exp_hint = _EXPERIENCE_HINTS.get(request.experience_level)
+    tier_hint = _TIER_HINTS.get(request.company_tier)
+    sector = request.sector.strip()
+
+    def build(use_tier: bool, use_sector: bool, use_exp: bool) -> str:
+        parts = [title]
+        if use_exp and exp_hint:
+            parts.append(exp_hint)
+        if use_tier and tier_hint:
+            parts.append(tier_hint)
+        if use_sector and sector:
+            parts.append(sector)
+        return " ".join(parts)
+
+    ladder = [
+        build(True, True, True),
+        build(False, True, True),
+        build(False, False, True),
+        build(False, False, False),
+    ]
+    deduped: List[str] = []
+    for q in ladder:
+        if q not in deduped:
+            deduped.append(q)
+    return deduped
+
+
+_REMOTE_LOCATION_TERMS = {"remote", "anywhere", "wfh", "work from home", "n/a", "any", ""}
+
+
+def _is_remote_like_location(location: str) -> bool:
+    return location.strip().lower() in _REMOTE_LOCATION_TERMS
+
+
+async def _llm_reformulate_query(request: JobSearchRequest) -> str:
+    """Last resort when every deterministic ladder level came back empty --
+    one LLM call to suggest a broader/synonym phrasing a real posting is
+    more likely to use, rather than just giving up. Only spent when the
+    free deterministic attempts have already failed, to avoid burning
+    LLM quota on every routine search."""
+    prompt = (
+        "A job search on a job board API returned zero results for every "
+        "attempted phrasing. Suggest ONE better search phrase more likely "
+        "to match real postings -- broader or synonymous job title if the "
+        "original seems overly narrow or niche.\n\n"
+        f"Original title: {request.target_title}\n"
+        f"Location: {request.target_location}\n"
+        f"Experience level: {request.experience_level or 'not specified'}\n"
+        f"Sector: {request.sector or 'not specified'}\n\n"
+        "Return ONLY the reformulated search phrase (2-5 words), nothing "
+        "else -- no explanation, no quotes, no location."
+    )
+    raw = await ainvoke_with_fallback([HumanMessage(content=prompt)], max_tokens=30)
+    return raw.strip().strip('"').strip("'")
 
 
 @app.post("/search-jobs", response_model=JobSearchResponse)
@@ -526,24 +595,28 @@ async def search_jobs(request: JobSearchRequest):
     return await _search_jobs_ddgs(request)
 
 
-async def _search_jobs_adzuna(
-    request: JobSearchRequest, app_id: str, app_key: str
-) -> JobSearchResponse:
-    # Detect country from location string (default us)
-    location_lower = request.target_location.lower()
-    country = "gb" if any(c in location_lower for c in ["uk", "london", "england", "britain"]) else \
-              "ca" if any(c in location_lower for c in ["canada", "toronto", "vancouver", "montreal"]) else \
-              "au" if any(c in location_lower for c in ["australia", "sydney", "melbourne"]) else "us"
+def _adzuna_country(target_location: str) -> str:
+    location_lower = target_location.lower()
+    return "gb" if any(c in location_lower for c in ["uk", "london", "england", "britain"]) else \
+           "ca" if any(c in location_lower for c in ["canada", "toronto", "vancouver", "montreal"]) else \
+           "au" if any(c in location_lower for c in ["australia", "sydney", "melbourne"]) else "us"
 
+
+async def _adzuna_raw_query(
+    app_id: str, app_key: str, country: str, what: str, where: str, max_results: int,
+) -> List[Dict[str, str]]:
+    """One Adzuna API call for a single (what, where) pair. Returns a
+    parsed job list, possibly empty -- callers decide what empty means."""
     params = {
         "app_id": app_id,
         "app_key": app_key,
-        "results_per_page": min(request.max_results, 20),
-        "what": _build_search_terms(request),
-        "where": request.target_location,
+        "results_per_page": min(max_results, 20),
+        "what": what,
         "sort_by": "relevance",
         "content-type": "application/json",
     }
+    if where:
+        params["where"] = where
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -568,12 +641,38 @@ async def _search_jobs_adzuna(
 
         jobs.append({
             "company": item.get("company", {}).get("display_name", "Unknown"),
-            "title": item.get("title", request.target_title),
-            "location": item.get("location", {}).get("display_name", request.target_location),
+            "title": item.get("title", what),
+            "location": item.get("location", {}).get("display_name", where or "Remote"),
             "link": item.get("redirect_url", ""),
             "description": (item.get("description", "")[:200]).strip(),
             "salary": salary,
         })
+    return jobs
+
+
+async def _search_jobs_adzuna(
+    request: JobSearchRequest, app_id: str, app_key: str
+) -> JobSearchResponse:
+    country = _adzuna_country(request.target_location)
+    # Adzuna's `where` expects a real geocodable place -- "Remote" isn't
+    # one (confirmed live: it returned zero results). Omitting `where`
+    # entirely searches nationwide for the detected country instead.
+    where = "" if _is_remote_like_location(request.target_location) else request.target_location
+
+    jobs: List[Dict[str, str]] = []
+    for what in _search_term_ladder(request):
+        jobs = await _adzuna_raw_query(app_id, app_key, country, what, where, request.max_results)
+        if jobs:
+            return JobSearchResponse(jobs=jobs, count=len(jobs))
+
+    # Deterministic ladder exhausted (even bare title+location came back
+    # empty) -- one LLM call to reformulate, rather than just giving up.
+    try:
+        reformulated = await _llm_reformulate_query(request)
+        if reformulated:
+            jobs = await _adzuna_raw_query(app_id, app_key, country, reformulated, where, request.max_results)
+    except Exception:
+        pass
 
     return JobSearchResponse(jobs=jobs, count=len(jobs))
 
