@@ -94,6 +94,21 @@ def _build_llm(
         temperature=temperature,
         max_tokens=max_tokens,
         model_kwargs=model_kwargs,
+        # Confirmed live (2026-07-26): with neither set, LangChain's default
+        # retry-with-backoff plus no request timeout means one congested
+        # free-tier model can silently eat tens of seconds before this loop
+        # ever reaches the next provider -- directly responsible for a
+        # search going from 69s to 118s with zero code change between runs.
+        # We already have our own multi-model fallback below; a single fast
+        # failure per model beats LangChain retrying the same slow one.
+        # Scaled off max_tokens (floor 15s, cap 60s, ~30 tokens/sec) rather
+        # than a flat value -- the short agentic_search JSON calls (400-1500
+        # tokens) need to fail fast, but the long-form resume/cover-letter
+        # generations elsewhere (up to 2500 tokens) legitimately need more
+        # wall-clock time on a slow free model and shouldn't get cut off
+        # before they'd have succeeded.
+        timeout=max(15, min(60, max_tokens // 30)),
+        max_retries=0,
     )
 
 

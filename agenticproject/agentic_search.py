@@ -13,6 +13,7 @@ import asyncio
 import json
 import re
 from typing import Any, Dict, List
+from urllib.parse import urlparse
 
 from langchain_core.messages import HumanMessage
 from ddgs import DDGS
@@ -94,6 +95,92 @@ def _looks_like_job_posting(url: str) -> bool:
     return any(p in lower for p in _ALLOWED_URL_PATTERNS)
 
 
+# Confirmed live (2026-07-26): some URLs that pass the allowlist above
+# (genuinely /jobs/view/... paths) still come back from DDG with a search
+# AGGREGATOR page indexed at that URL rather than the single posting --
+# titles like "9,000+ Robotics Engineer jobs in Canada (660 new)" with a
+# body listing several unrelated roles. The URL shape alone can't catch
+# this; the title shape can.
+_AGGREGATOR_TITLE_RE = re.compile(r"^\s*[\d,]+\+?\s+.*\bjobs?\b", re.IGNORECASE)
+
+
+def _is_aggregator_title(title: str) -> bool:
+    return bool(_AGGREGATOR_TITLE_RE.match(title))
+
+
+# The dominant title shape for a real single LinkedIn posting is
+# "{Company} hiring {Title} in {Location}" (with a trailing "| LinkedIn"
+# or "..." truncation) -- confirmed by sampling live DDG results. The old
+# " at "/" - " parsing never matches this shape, which is why company
+# came back "Unknown" for every real result in a live test.
+_HIRING_TITLE_RE = re.compile(r"^(.+?)\s+hiring\s+(.+?)\s+in\s+.+$", re.IGNORECASE)
+
+
+# Guards the " - " fallback below: when a title has no real company in it
+# at all (e.g. "Robotics Software Engineer - Mobile Robotics (ROS2 /
+# Navigation)"), blindly trusting the shorter half as "company" produces a
+# confident-looking wrong answer. If that half reads like a job title
+# itself, prefer admitting "Unknown" over guessing.
+_JOB_TITLE_WORDS_RE = re.compile(
+    r"\b(engineer|developer|manager|analyst|scientist|designer|specialist|"
+    r"architect|intern|director|lead|consultant)\b",
+    re.IGNORECASE,
+)
+
+
+def _parse_title(title: str, fallback_title: str) -> tuple:
+    """Returns (company, job_title). Falls back to ("Unknown", fallback_title)
+    when no known shape matches rather than guessing."""
+    hiring_match = _HIRING_TITLE_RE.match(title)
+    if hiring_match:
+        return hiring_match.group(1).strip(), hiring_match.group(2).strip()
+    if " at " in title:
+        parts = title.split(" at ")
+        return parts[1].split("|")[0].split("-")[0].strip(), parts[0].strip()
+    if " - " in title:
+        parts = title.split(" - ", 1)
+        company, job_title = (
+            (parts[0].strip(), parts[1].strip())
+            if len(parts[0]) < 50
+            else (parts[1].strip(), parts[0].strip())
+        )
+        if _JOB_TITLE_WORDS_RE.search(company):
+            return "Unknown", fallback_title
+        return company, job_title
+    return "Unknown", fallback_title
+
+
+# Fallback for when the title has no recognizable company shape at all
+# (confirmed live: e.g. "Software Engineer, Localization, Calibration &
+# Mapping" carries zero company signal in the title). All three allowed
+# job boards encode the company directly in the URL path, which is a more
+# reliable source than the title text -- lever.co/greenhouse.io always put
+# it as the first path segment, and LinkedIn job URLs follow
+# ".../jobs/view/{title-slug}-at-{company-slug}-{numeric-id}".
+_LINKEDIN_URL_COMPANY_RE = re.compile(r"-at-(.+?)-\d+$")
+
+
+def _company_from_url(url: str) -> str:
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return ""
+    netloc = parsed.netloc.lower()
+    path = parsed.path.rstrip("/")
+
+    if "lever.co" in netloc or "greenhouse.io" in netloc:
+        parts = [p for p in path.split("/") if p]
+        return parts[0].replace("-", " ").title() if parts else ""
+
+    if "linkedin.com" in netloc and "/jobs/view/" in path:
+        slug = path.split("/jobs/view/", 1)[-1]
+        match = _LINKEDIN_URL_COMPANY_RE.search(slug)
+        if match:
+            return match.group(1).replace("-", " ").title()
+
+    return ""
+
+
 QUERY_GEN_SCHEMA_HINT = '{"queries": ["...", "...", "..."]}'
 
 
@@ -165,14 +252,14 @@ async def agentic_job_search(request) -> List[Dict[str, str]]:
             seen_urls.add(url)
 
             title = result.get("title", "").strip()
+            if _is_aggregator_title(title):
+                continue
             content = result.get("content", "").strip()
-            company, job_title = "Unknown", request.target_title
-            if " at " in title:
-                parts = title.split(" at ")
-                job_title, company = parts[0].strip(), parts[1].split("|")[0].split("-")[0].strip()
-            elif " - " in title:
-                parts = title.split(" - ", 1)
-                company, job_title = (parts[0].strip(), parts[1].strip()) if len(parts[0]) < 50 else (parts[1].strip(), parts[0].strip())
+            company, job_title = _parse_title(title, request.target_title)
+            if company == "Unknown":
+                url_company = _company_from_url(url)
+                if url_company:
+                    company = url_company
 
             candidates.append({
                 "company": company,
