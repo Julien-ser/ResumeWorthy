@@ -169,6 +169,28 @@ def _parse_title(title: str, fallback_title: str) -> tuple:
     return "Unknown", fallback_title
 
 
+def _normalize_for_compare(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def _sanitize_job_title(job_title: str, company: str, fallback_title: str) -> str:
+    """Confirmed live (2026-07-26): a Greenhouse result's title field can
+    be a generic careers-page SEO title ("Careers | Automation
+    engineering & more - Applied Intuition"), which _parse_title's " - "
+    heuristic reads backwards -- the actual company name ends up in
+    job_title instead. Rather than chase every such shape, just refuse to
+    trust a job_title that turns out to just be the company name again,
+    or that still carries generic careers-page language."""
+    job_title = job_title.strip()
+    if not job_title:
+        return fallback_title
+    if _normalize_for_compare(job_title) == _normalize_for_compare(company):
+        return fallback_title
+    if "careers" in job_title.lower():
+        return fallback_title
+    return job_title
+
+
 # Fallback for when the title has no recognizable company shape at all
 # (confirmed live: e.g. "Software Engineer, Localization, Calibration &
 # Mapping" carries zero company signal in the title). All three allowed
@@ -274,11 +296,22 @@ async def agentic_job_search(request) -> List[Dict[str, str]]:
             if _is_aggregator_title(title):
                 continue
             content = result.get("content", "").strip()
-            company, job_title = _parse_title(title, request.target_title)
-            if company == "Unknown":
-                url_company = _company_from_url(url)
-                if url_company:
-                    company = url_company
+            netloc = urlparse(url).netloc.lower()
+            if "greenhouse.io" in netloc or "lever.co" in netloc:
+                # Confirmed live: title text on these ATS platforms is
+                # unreliable (generic careers-page titles, "- Greenhouse"
+                # branding suffixes mistaken for the company). The URL
+                # slug is deterministic -- it IS the company's board
+                # slug -- so it's authoritative here, not a fallback.
+                _, raw_job_title = _parse_title(title, request.target_title)
+                company = _company_from_url(url) or "Unknown"
+                job_title = _sanitize_job_title(raw_job_title, company, request.target_title)
+            else:
+                company, job_title = _parse_title(title, request.target_title)
+                if company == "Unknown":
+                    url_company = _company_from_url(url)
+                    if url_company:
+                        company = url_company
 
             candidates.append({
                 "company": company,
