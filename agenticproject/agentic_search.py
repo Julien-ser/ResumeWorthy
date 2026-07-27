@@ -11,10 +11,12 @@ search. Real cost: at least 2 LLM calls per search instead of zero.
 
 import asyncio
 import json
+import os
 import re
 from typing import Any, Dict, List
 from urllib.parse import urlparse
 
+import httpx
 from langchain_core.messages import HumanMessage
 from ddgs import DDGS
 
@@ -71,6 +73,59 @@ def _ddg_search(query: str, max_results: int = 6) -> List[Dict[str, str]]:
         ]
     except Exception:
         return []
+
+
+TAVILY_API_URL = "https://api.tavily.com/search"
+
+# Real search API, not an HTML scrape -- primary source when TAVILY_API_KEY
+# is configured. Confirmed live (2026-07-26/27) that ddgs (unofficial DDG
+# scraping) has three compounding problems: it doesn't reliably honor
+# site: filters, its cached snippet content is frequently stale or wrong
+# (aggregator pages, generic careers-page SEO titles), and it surfaces
+# postings that have since 404'd -- DDG's crawl cache has no freshness
+# guarantee. Tavily's include_domains does real structured domain
+# filtering (not a hopeful "site:" substring in the query text), and does
+# actual content extraction rather than returning whatever snippet text
+# happened to be cached. DDG stays as the automatic fallback when no key
+# is set -- same optional-backup pattern as Groq in llm_fallback.py, not a
+# hard dependency.
+_TAVILY_INCLUDE_DOMAINS = ["linkedin.com", "greenhouse.io", "lever.co"]
+
+
+async def _tavily_search(query: str, max_results: int = 6) -> List[Dict[str, str]]:
+    api_key = os.environ.get("TAVILY_API_KEY")
+    if not api_key:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                TAVILY_API_URL,
+                json={
+                    "api_key": api_key,
+                    "query": query,
+                    "search_depth": "basic",
+                    "max_results": max_results,
+                    "include_domains": _TAVILY_INCLUDE_DOMAINS,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+        return [
+            {"title": r.get("title", ""), "url": r.get("url", ""), "content": r.get("content", "")}
+            for r in data.get("results", [])
+        ]
+    except Exception:
+        return []
+
+
+async def _run_search(query: str, max_results: int = 6) -> List[Dict[str, str]]:
+    if os.environ.get("TAVILY_API_KEY"):
+        results = await _tavily_search(query, max_results)
+        if results:
+            return results
+        # Tavily errored or came back empty -- fall through to DDG rather
+        # than returning nothing for this query.
+    return await asyncio.to_thread(_ddg_search, query, max_results)
 
 
 # Allowlist, not a blocklist -- confirmed live (2026-07-26) that DDG's
@@ -274,13 +329,13 @@ async def agentic_job_search(request) -> List[Dict[str, str]]:
     if not queries:
         queries = [_fallback_query(request)]
 
-    # _ddg_search is a blocking sync call (DDGS().text(...)) -- confirmed
-    # live this was a real latency contributor: running up to 3 queries
-    # sequentially inside an async function blocks the event loop each
-    # time with zero concurrency. asyncio.to_thread + gather runs them in
-    # parallel instead.
+    # Runs every query concurrently regardless of source -- _run_search
+    # picks Tavily (real async HTTP call) when TAVILY_API_KEY is set,
+    # otherwise DDG's blocking scrape wrapped in asyncio.to_thread. Either
+    # way, running up to 3 queries sequentially was a real latency
+    # contributor (confirmed live); gather runs them in parallel.
     result_batches = await asyncio.gather(
-        *[asyncio.to_thread(_ddg_search, query, 6) for query in queries]
+        *[_run_search(query, 6) for query in queries]
     )
 
     candidates: List[Dict[str, str]] = []
